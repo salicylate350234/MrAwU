@@ -1,6 +1,6 @@
 {
   "name": "mrawu",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "阿物先生 MrAwU —— 把物理题图变成可交互的受力动画：单个离线 HTML，内联自研 velocity-Verlet 引擎，每一帧的力都可与解析解对照。同时是 DSH skill。",
   "license": "MIT",
   "author": "水杨酸盐 <salicylate350234@users.noreply.github.com> (https://github.com/salicylate350234)",
