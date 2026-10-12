@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import zip from './ziputil.cjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -96,13 +97,23 @@ const readmeTxt = [
 ].join('\r\n');
 fs.writeFileSync(path.join(pkgDir, '使用说明.txt'), readmeTxt, 'utf8');
 
+// 压缩改用 node/ziputil.cjs（纯 Node 写 zip，见该文件头部说明）：
+// 早先用 spawnSync('powershell', Compress-Archive) 会让 Node 直接崩
+// （exit 0xC0000409 STATUS_STACK_BUFFER_OVERRUN），换 tar.exe 同样崩——
+// 本环境下 spawnSync 调外部程序就会崩，故彻底去掉外部命令依赖（顺带跨平台）。
+function zipDir(srcDir, outZip, entry) {
+  try {
+    const r = zip.zipDir(srcDir, outZip, entry);
+    return r;
+  } catch (e) {
+    console.log('（zip 生成失败：' + (e && e.message) + '，可手动压缩 ' + srcDir + '）');
+    return null;
+  }
+}
+
 console.log('\n【5/5】压缩成 zip');
-const zip = path.join(ROOT, 'dist', '阿物先生-交付包.zip');
-fs.rmSync(zip, { force: true });
-const ps = spawnSync('powershell', ['-NoProfile', '-Command',
-  'Compress-Archive -Path "' + pkgDir + '\\*" -DestinationPath "' + zip + '" -Force'],
-  { stdio: 'inherit' });
-if (ps.status !== 0) console.log('（zip 生成失败，可手动压缩 ' + pkgDir + '）');
+const zipPath = path.join(ROOT, 'dist', '阿物先生-交付包.zip');
+zipDir(pkgDir, zipPath, null);
 
 console.log('\n【5/5】打包源码（给需要二次开发/加题型的老师）');
 const srcStage = path.join(ROOT, 'build', 'src-pkg', 'MrAwU');
@@ -111,18 +122,16 @@ fs.mkdirSync(srcStage, { recursive: true });
 ['SKILL.md', 'README.md', 'AI_DISCLOSURE.md', 'LICENSE', 'package.json'].forEach(function (f) {
   fs.copyFileSync(path.join(ROOT, f), path.join(srcStage, f));
 });
-['lib', 'browser', 'node', 'vendor', 'references', 'examples', 'docs'].forEach(function (d) {
+// bin/ 是 npm 包的命令行入口，源码包也要带上（否则拿到源码的人没有 npx mrawu）
+['bin', 'lib', 'browser', 'node', 'vendor', 'references', 'examples', 'docs'].forEach(function (d) {
   const src = path.join(ROOT, d);
   if (fs.existsSync(src)) fs.cpSync(src, path.join(srcStage, d), { recursive: true });
 });
 const srcZip = path.join(ROOT, 'dist', '阿物先生-源码包.zip');
-fs.rmSync(srcZip, { force: true });
-spawnSync('powershell', ['-NoProfile', '-Command',
-  'Compress-Archive -Path "' + srcStage + '" -DestinationPath "' + srcZip + '" -Force'],
-  { stdio: 'inherit' });
+zipDir(path.join(ROOT, 'build', 'src-pkg'), srcZip, 'MrAwU');
 
 console.log('\n交付包已生成：');
 console.log('  目录: ' + pkgDir);
-if (fs.existsSync(zip)) console.log('  教师包: ' + zip + '  (' + (fs.statSync(zip).size / 1024).toFixed(0) + ' KB)');
+if (fs.existsSync(zipPath)) console.log('  教师包: ' + zipPath + '  (' + (fs.statSync(zipPath).size / 1024).toFixed(0) + ' KB)');
 console.log('  HTML  : ' + htmlDst + '  (' + (fs.statSync(htmlDst).size / 1024).toFixed(0) + ' KB)');
 if (fs.existsSync(srcZip)) console.log('  源码包: ' + srcZip + '  (' + (fs.statSync(srcZip).size / 1024).toFixed(0) + ' KB)');
