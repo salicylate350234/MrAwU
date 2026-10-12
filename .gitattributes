@@ -1,0 +1,6 @@
+﻿# 仓库内统一 LF（源码在 Windows/macOS/Linux 之间互不干扰）
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.zstd binary
+*.zip binary

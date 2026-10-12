@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__PFA_TITLE__</title>
+<style>
+  :root {
+    --bg: #0a0e17; --panel: #121a2b; --panel2: #172136; --line: #26344f;
+    --fg: #e6edf8; --muted: #8fa3c2; --accent: #4da3ff;
+    --gravity: #4da3ff; --normal: #35d07f; --friction: #ffb020;
+    --joint: #b26bff; --applied: #ff5d5d; --total: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, "Microsoft YaHei", "PingFang SC", sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    padding: 8px 16px; border-bottom: 1px solid var(--line); display: flex;
+    align-items: center; gap: 12px; flex-wrap: wrap; background: var(--panel);
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  header .sub { color: var(--muted); font-size: 12.5px; }
+  header .hint { margin-left: auto; color: var(--muted); font-size: 12px; }
+  #btn-gear {
+    font-size: 18px; line-height: 1; padding: 5px 10px; border-radius: 8px;
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--line); cursor: pointer;
+  }
+  #btn-gear:hover { border-color: var(--accent); }
+  /* 布局：header + [侧边栏 | 画布区]，画布区里再分 画布 / 传输条 / 下边栏。
+     侧边栏与下边栏都是**布局里的一格**（不是浮层），折叠时画布自动变大——和 Office 的工具栏一个道理。 */
+  #app { flex: 1; display: flex; flex-direction: row; min-height: 0; overflow: hidden; }
+  main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+  /* 侧边栏：常驻在左侧，可折叠 */
+  aside#side {
+    flex: 0 0 344px; width: 344px; min-height: 0;
+    background: var(--panel); border-right: 1px solid var(--line);
+    overflow-y: auto; padding: 12px 14px 20px; display: flex; flex-direction: column; gap: 12px;
+  }
+  aside#side:not(.open) { display: none; }
+  #backdrop { display: none !important; }
+  .drawer-head { display: flex; align-items: center; gap: 10px; }
+  .drawer-head b { font-size: 14px; }
+  .drawer-head button { margin-left: auto; }
+
+  .stage-wrap { position: relative; padding: 10px 12px 0; flex: 1 1 auto; min-height: 0; display: flex; }
+  /* 画布填满剩余空间（侧边栏/下边栏折叠时自动变大） */
+  #stage { width: 100%; height: 100%; min-height: 240px; display: block; border-radius: 10px; border: 1px solid var(--line); }
+  .graph-wrap { flex: 0 0 auto; display: block; padding-top: 8px; }
+  #graph { width: 100%; height: 176px; display: block; border-radius: 10px; border: 1px solid var(--line); }
+  .graph-hint { padding: 4px 2px 8px; font-size: 12px; }
+
+  /* 受力小窗：浮在画布右上角，可折叠；尺寸随内容自适应（刚好装下受力图） */
+  .fp {
+    position: absolute; top: 20px; right: 22px; z-index: 6;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 6px 22px rgba(0,0,0,.35); overflow: hidden;
+  }
+  .fp-head {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 10px;
+    border-bottom: 1px solid var(--line); background: var(--panel2);
+  }
+  .fp-head b { font-size: 12.5px; font-weight: 650; white-space: nowrap; }
+  .fp-head select { width: auto; max-width: 170px; font-size: 12px; padding: 3px 6px; }
+  .fp-head button { padding: 2px 8px; line-height: 1.2; }
+  .fp-body { padding: 6px; }
+  .fp.collapsed .fp-body { display: none; }
+  .fp.hidden { display: none; }
+  #fp-canvas { display: block; border-radius: 6px; }
+  body.light .fp { background: #ffffff; box-shadow: 0 6px 22px rgba(0,0,0,.16); }
+
+  /* 传输条：始终可见（侧边栏/下边栏展开时也照常可用） */
+  .transport { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--panel); }
+  /* 下边栏：可折叠 */
+  #bottom-panel { flex: 0 0 auto; }
+  #bottom-panel.collapsed { display: none; }
+  .options { border-bottom: 1px solid var(--line); }
+
+  /* 播放键：▶ / ⏸ 图标（浅色模式下为天蓝色） */
+  button.icobtn { display: inline-flex; align-items: center; justify-content: center;
+    min-width: 42px; padding: 6px 10px; }
+  button.icobtn svg { fill: currentColor; display: block; }
+  button.primary { color: #ffffff; }
+  body.light button.primary { background: #7dd3fc; border-color: #38bdf8; color: #063a55; }
+  body.light button.primary:hover { border-color: #0ea5e9; }
+  .graph-hint b { color: var(--accent); }
+  #marker-tip {
+    position: absolute; z-index: 20; max-width: 400px; display: none;
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--accent);
+    border-radius: 8px; padding: 8px 10px; font-size: 12.5px; line-height: 1.55;
+    box-shadow: 0 8px 26px rgba(0,0,0,.45); pointer-events: none;
+  }
+  #marker-tip b { color: var(--accent); }
+  #marker-tip .tip-t { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .controls { display: flex; align-items: center; gap: 8px; padding: 10px 14px; flex-wrap: wrap; }
+  button {
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 7px;
+    padding: 6px 13px; font-size: 13px; cursor: pointer; font-family: inherit;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: #1d3b63; border-color: #2f5c96; }
+  select, input[type=range] { font-family: inherit; }
+  select { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; width: 100%; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  #scrub { flex: 1; min-width: 120px; }
+  .time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; white-space: nowrap; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .card h2 { font-size: 12.5px; margin: 0 0 8px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+  .param { margin-bottom: 9px; }
+  .param label { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--muted); margin-bottom: 2px; }
+  .param label b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .layers label { display: flex; align-items: center; gap: 7px; font-size: 13px; padding: 2px 0; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 4px 6px; text-align: left; border-bottom: 1px solid rgba(38,52,79,.6); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+  td.num { text-align: right; }
+  tr.pass td:last-child { color: var(--normal); }
+  tr.fail td:last-child { color: #ff7b8a; }
+  tr.fail { background: rgba(255,93,93,.07); }
+  tr.sel { background: rgba(77,163,255,.08); }
+  td.g { color: var(--gravity); } td.n { color: var(--normal); }
+  td.fr { color: var(--friction); } td.j { color: var(--joint); }
+  td.a { color: var(--applied); } td.t { color: var(--total); }
+  td.r { color: var(--muted); }
+  .muted { color: var(--muted); font-size: 12.5px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 12px 14px; }
+  .scroll { max-height: 300px; overflow: auto; }
+  textarea {
+    width: 100%; height: 96px; background: var(--panel2); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 7px; padding: 8px; font: 12px/1.45 ui-monospace, Consolas, monospace;
+    resize: vertical;
+  }
+  #alert { display: none; margin: 0 12px; padding: 8px 12px; border-radius: 8px; background: rgba(255,93,93,.12); color: #ffb3bb; font-size: 13px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  .notes { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+  @media (max-width: 900px) {
+    .grid2 { grid-template-columns: 1fr; }
+    header .hint { display: none; }
+  }
+  /* 浅色主题：页面外壳同步变白底深字 */
+  body.light {
+    --bg: #f7f7f4; --panel: #ffffff; --panel2: #f2f2ee; --line: #d8d8d2;
+    --fg: #16181d; --muted: #6b7280; --accent: #1f6feb;
+  }
+  body.light header { background: #ffffff; }
+  body.light canvas { border-color: #cfcfc8; }
+  body.light .card { background: #ffffff; }
+</style>
+<!-- 加载期错误也要抓：必须放在所有脚本之前 -->
+<script>
+window.addEventListener('error', function (e) {
+  var box = document.getElementById('alert');
+  var msg = '脚本错误：' + (e.message || e.error || e) +
+    (e.filename ? '（' + e.filename.split('/').pop() + ' 第' + e.lineno + '行）' : '');
+  if (box) { box.style.display = 'block'; box.textContent = msg; }
+  else { document.addEventListener('DOMContentLoaded', function () {
+    var b2 = document.getElementById('alert'); if (b2) { b2.style.display = 'block'; b2.textContent = msg; }
+  }); }
+});
+</script>
+</head>
+<body>
+<header>
+  <button id="btn-gear" title="侧边栏（设置：模型 / 参数 / 标注 / 图层）">☰</button>
+  <h1>__PFA_TITLE__</h1>
+  <span class="sub">受力分析 · 物理引擎实时计算 · 离线单文件</span>
+  <button id="btn-bottom-toggle" title="下边栏（图像与显示选项）">▤ 图像</button>
+  <span class="hint">空格=播放/暂停　←→=单帧　R=重置　☰=设置</span>
+</header>
+
+<div id="app">
+  <aside id="side">
+
+  <div class="drawer-head">
+    <b>设置</b>
+    <button id="btn-close">关闭 ✕</button>
+  </div>
+
+  <div class="card" id="card-model">
+    <h2>模型</h2>
+    <select id="model-select"></select>
+    <div id="scene-title" style="margin-top:8px;font-weight:600"></div>
+    <div id="scene-subtitle" class="muted"></div>
+  </div>
+
+  <div class="card">
+    <h2>参数（拖动即时重算）</h2>
+    <div id="params"></div>
+  </div>
+
+  <div class="card" id="card-field" style="display:none">
+    <h2>静电场</h2>
+    <div class="row">
+      <span class="muted" style="flex:0 0 auto">显示</span>
+      <label class="muted" style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="field-lines" checked> 电场线</label>
+      <label class="muted" style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="field-equi" checked> 等势线</label>
+    </div>
+    <div style="height:10px"></div>
+    <div class="row">
+      <span class="muted" style="flex:0 0 auto">新增</span>
+      <select id="add-kind">
+        <option value="pos">正电荷</option>
+        <option value="neg">负电荷</option>
+        <option value="probe">场点</option>
+      </select>
+    </div>
+    <div style="height:6px"></div>
+    <div class="param" id="add-q-wrap">
+      <label><span>新增电量 q</span><b id="pv-addq">+2.0 μC</b></label>
+      <input type="range" id="add-q" min="0.5" max="10" step="0.5" value="2">
+    </div>
+    <button id="btn-add" style="width:100%">新增（放在视野中心）</button>
+    <div style="height:10px"></div>
+    <div id="sel-wrap" class="muted">未选中任何对象。点画布上的电荷/场点即可选中。</div>
+    <div class="param" id="sel-q-wrap" style="display:none">
+      <label><span>选中电量 q</span><b id="pv-selq">—</b></label>
+      <input type="range" id="sel-q" min="0.5" max="10" step="0.5" value="2">
+    </div>
+    <div class="row" id="sel-btn-wrap" style="display:none">
+      <button id="btn-flip">正负互换</button>
+      <button id="btn-del-charge">删除选中</button>
+    </div>
+    <div style="height:8px"></div>
+    <button id="btn-refit" style="width:100%">重新取景（适配全部电荷）</button>
+    <div class="notes" style="margin-top:8px">在画布上拖动可移动电荷/场点，右键删除。场点会按"力的表示方式"画出该处的场强大小与方向。取景是锁定的——拖动电荷时画面不会跟着缩放，需要时点上面的按钮重新适配。</div>
+  </div>
+
+  <div class="card">
+    <h2>主题</h2>
+    <div class="row">
+      <span class="muted" style="flex:0 0 auto">显示</span>
+      <select id="theme">
+        <option value="dark">深色（屏幕演示）</option>
+        <option value="light">浅色（教材/试卷风格）</option>
+      </select>
+    </div>
+    <div class="notes" style="margin-top:6px">浅色：白底、淡黄护眼网格、物体黑框空心、力全部黑色箭头、合力为白色空心箭头</div>
+  </div>
+
+  <div class="card">
+    <h2>标注</h2>
+    <div class="row">
+      <span class="muted" style="flex:0 0 auto">文字</span>
+      <select id="label-mode">
+        <option value="full">完整（力的名称+数值）</option>
+        <option value="value">仅数值（力/速度数字）</option>
+        <option value="off">关闭文字</option>
+      </select>
+    </div>
+    <div style="height:8px"></div>
+    <div class="row">
+      <span class="muted" style="flex:0 0 auto">字号</span>
+      <input type="range" id="label-size" min="8" max="18" step="1" value="12">
+    </div>
+    <div class="layers" style="margin-top:6px">
+      <label><input type="checkbox" id="layer-legend" checked> 左下角图例/力标尺</label>
+      <label><input type="checkbox" id="layer-dims" checked> 尺寸标注（Δx / 板长）</label>
+    </div>
+  </div>
+
+  <div class="card layers">
+    <h2>显示图层</h2>
+    <label><input type="checkbox" id="layer-grid" checked> 背景网格</label>
+    <label><input type="checkbox" id="layer-trail" checked> 运动轨迹</label>
+  </div>
+
+  <div class="card">
+    <h2>场景 JSON（可粘贴外部场景）</h2>
+    <textarea id="scene-json" placeholder="把 AI 生成的场景 JSON 粘贴到这里，然后点「载入」"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button id="btn-load-scene">载入</button>
+      <button id="btn-export-scene">导出当前场景</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>物理说明</h2>
+    <div id="scene-notes" class="notes"></div>
+  </div>
+  </aside>
+
+  <main>
+    <div class="stage-wrap">
+      <canvas id="stage"></canvas>
+      <!-- 受力小窗：把选中物体的各分力平移到窗口内画成受力图；可折叠，浮在画布上不占布局 -->
+      <div id="force-panel" class="fp">
+        <div class="fp-head">
+          <b>受力图</b>
+          <select id="fp-body" title="选择要分析的对象"></select>
+          <button id="fp-toggle" title="折叠 / 展开">▾</button>
+        </div>
+        <div class="fp-body">
+          <canvas id="fp-canvas"></canvas>
+        </div>
+      </div>
+    </div>
+    <div id="alert"></div>
+
+    <!-- 传输条：无论侧边栏/下边栏是否折叠，这一排始终可见 -->
+    <div class="controls transport">
+      <button id="btn-play" class="primary icobtn" title="播放 / 暂停（空格）" aria-label="播放">
+        <svg class="ico-play" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+          <path d="M8 5.2v13.6L19 12z"/>
+        </svg>
+        <svg class="ico-pause" viewBox="0 0 24 24" width="17" height="17" style="display:none" aria-hidden="true">
+          <rect x="7" y="5" width="3.4" height="14" rx="1.1"/>
+          <rect x="13.6" y="5" width="3.4" height="14" rx="1.1"/>
+        </svg>
+      </button>
+      <button id="btn-back" title="上一帧（←）">◀</button>
+      <button id="btn-step" title="下一帧（→）">▶</button>
+      <button id="btn-reset" title="重置（R）">重置</button>
+      <button id="btn-fp" title="显示 / 隐藏右上角受力小窗">受力图</button>
+      <input type="range" id="scrub" min="0" max="100" value="0" step="1">
+      <span class="time" id="time-label"></span>
+      <select id="speed" style="width:auto" title="播放速度">
+        <option value="0.1">0.1×</option>
+        <option value="0.25">0.25×</option>
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+      </select>
+    </div>
+
+    <!-- 下边栏：可折叠（图像 + 显示选项） -->
+    <section id="bottom-panel">
+      <div class="controls options">
+        <label class="muted" style="display:flex;align-items:center;gap:5px">
+          <input type="checkbox" id="loop" checked> 循环
+        </label>
+        <span style="width:10px"></span>
+        <button id="btn-crop" title="框选运动的主要部分，按框放大输出（可拖动 8 个控制点缩放/平移）">框选缩放</button>
+        <button id="btn-crop-reset" style="display:none">重置框</button>
+        <select id="arrow-mode" style="width:auto" title="箭头显示（三选一）">
+          <option value="forces" selected>显示：分力</option>
+          <option value="total">显示：合力</option>
+          <option value="velocity">显示：速度</option>
+        </select>
+        <div class="controls" id="field-bar" style="display:none;padding:0;border:0"></div>
+      </div>
+      <div class="stage-wrap graph-wrap">
+        <canvas id="graph"></canvas>
+        <div id="marker-tip"></div>
+        <div class="graph-hint muted">拖动播放头可定位；时间轴上的<b>断口</b>是临界时刻，鼠标移上去看说明</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="backdrop" style="display:none"></div>
+
+<!-- 只打包本题对应的模型时，这里注入模型白名单 -->
+<!--PFA:FILTER-->
+<!-- 物理引擎（planck.js，Box2D 的 JS 移植，MIT） -->
+<script>/*PFA:PLANCK*/</script>
+<script>/*PFA:LIB*/</script>
+<script>/*PFA:GRAPH*/</script>
+<script>/*PFA:MODELS*/</script>
+<script>/*PFA:PLAYER*/</script>
+<script>PFA.player.init();</script>
+</body>
+</html>

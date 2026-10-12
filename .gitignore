@@ -1,0 +1,23 @@
+# 依赖与调试产物：不进仓库
+node_modules/
+.npm-cache/
+build/
+*.log
+npm-debug.log*
+
+# 构建产物：由 node node/package.mjs 生成，可完全重建
+# 交付用的 HTML 与 zip 请挂在 GitHub Releases 上，而不是提交进仓库
+# （仓库里放构建产物会导致"源码已修、产物还是旧的"这类问题，本项目踩过）
+dist/
+!dist/.gitkeep
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 临时文件
+*.tmp
+*~

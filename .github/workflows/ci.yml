@@ -1,0 +1,45 @@
+name: CI
+
+# 公开仓库的"物理正确性"门禁：任何 push / PR 都自动跑
+#   1) 全库回归（每个模型与解析解逐项对照）
+#   2) 受力可见性审计（确认没有"非零却画不出来"的力）
+#   3) 与独立引擎 Planck.js 对拍（交叉验证，避免"自己给自己判分"）
+# 注意：不跑 node/package.mjs —— 它依赖 Windows 自带的 powershell + Compress-Archive。
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Node ${{ matrix.node }} 回归
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 16.7 是 package.json engines 里声明的下限（fs.cpSync），16 已 EOL 故只做最低限度覆盖
+        node: ['18', '20', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: 环境自检
+        run: node node/check-env.mjs
+        continue-on-error: true      # 缺可选的 @napi-rs/canvas 时只提示，不算失败
+
+      - name: 回归测试（解析解对照）
+        run: node node/tests.mjs
+
+      - name: 受力可见性审计
+        run: node node/audit.mjs
+
+      - name: 双引擎对拍（与 Planck.js 交叉验证）
+        run: node node/compare-engines.cjs
+
+      - name: 单文件构建自包含检查
+        run: node node/build.mjs --title "CI" --out /tmp/ci-build.html

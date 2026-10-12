@@ -1,0 +1,14 @@
+{
+  "name": "mrawu",
+  "private": true,
+  "version": "1.0.0",
+  "description": "阿物先生（MrAwU）：识图 → 自研 velocity-Verlet 仿真 → 单文件受力动画 HTML",
+  "type": "commonjs",
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.11"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.7.0"
+  }
+}
