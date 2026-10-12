@@ -21,3 +21,6 @@ desktop.ini
 # 临时文件
 *.tmp
 *~
+
+# npm 打包产物
+*.tgz

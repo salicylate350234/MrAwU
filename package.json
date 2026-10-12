@@ -1,14 +1,64 @@
 {
   "name": "mrawu",
-  "private": true,
   "version": "1.0.0",
-  "description": "阿物先生（MrAwU）：识图 → 自研 velocity-Verlet 仿真 → 单文件受力动画 HTML",
-  "type": "commonjs",
-  "dependencies": {
-    "@napi-rs/canvas": "^1.0.11"
-  },
+  "description": "阿物先生 MrAwU —— 把物理题图变成可交互的受力动画：单个离线 HTML，内联自研 velocity-Verlet 引擎，每一帧的力都可与解析解对照。同时是 DSH skill。",
   "license": "MIT",
+  "author": "水杨酸盐 <salicylate350234@users.noreply.github.com> (https://github.com/salicylate350234)",
+  "homepage": "https://github.com/salicylate350234/MrAwU#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/salicylate350234/MrAwU.git"
+  },
+  "bugs": {
+    "url": "https://github.com/salicylate350234/MrAwU/issues"
+  },
+  "keywords": [
+    "physics",
+    "physics-education",
+    "force-analysis",
+    "受力分析",
+    "物理",
+    "教学",
+    "verlet",
+    "canvas",
+    "simulation",
+    "offline",
+    "single-file",
+    "dsh-skill"
+  ],
+  "type": "commonjs",
+  "bin": {
+    "mrawu": "bin/mrawu.cjs"
+  },
   "engines": {
     "node": ">=16.7.0"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "browser/",
+    "node/",
+    "vendor/",
+    "references/",
+    "docs/",
+    "dist/阿物先生.html",
+    "SKILL.md",
+    "README.md",
+    "CHECKLIST.md",
+    "AI_DISCLOSURE.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node node/tests.mjs",
+    "audit": "node node/audit.mjs",
+    "crosscheck": "node node/compare-engines.cjs",
+    "check": "node node/check-env.mjs",
+    "build": "node node/build.mjs",
+    "pack:teacher": "node node/package.mjs",
+    "prepack": "node node/build.mjs",
+    "prepublishOnly": "node node/tests.mjs && node node/audit.mjs && node node/compare-engines.cjs"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

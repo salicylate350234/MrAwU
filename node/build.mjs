@@ -29,7 +29,7 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv.slice(2));
 const OUT = path.resolve(args.out || path.join(ROOT, 'dist/阿物先生.html'));
-const TITLE = args.title || '物理受力分析动画演示器';
+const TITLE = args.title || '阿物先生 · 物理受力分析动画演示器';
 // --models plankPush  → 只打包这道题对应的模型（交给老师的文件里不会有无关模型）
 const MODEL_FILTER = args.models ? String(args.models).split(',').map(s => s.trim()).filter(Boolean) : [];
 // --engine verlet → 不打包 planck（模型必须都已迁移到自研 Verlet，构建时强制校验）

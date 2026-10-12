@@ -123,6 +123,27 @@ velocity-Verlet integrator; Planck.js is used only as an independent cross-check
 
 ## 三、给我自己/开发者：本机运行与重新构建
 
+### 3.0 作为 npm 包使用（npx，不用克隆仓库）
+
+```bash
+npx mrawu                       # 直接把单文件 HTML 生成到当前目录（包里已带预构建版本）
+npx mrawu --out ./给老师/        # 指定输出位置（目录或文件名）
+npx mrawu --list                # 列出全部模型
+npx mrawu --install-skill       # 把本 skill 装到 <当前目录>/.dsh/skills/MrAwU
+npx mrawu --check               # 环境自检 + 回归 + 受力审计 + 双引擎对拍
+npx mrawu --build --models incline   # 从源码只打包某个模型
+```
+
+- 默认动作**零依赖、不需要联网**：包里已经带了构建好的 `阿物先生.html`，取出来双击即可。
+- 想从源码改模型再加题型，见下面的完整工具链（需要 Node ≥ 16.7）。
+- 开发期的 GIF / 预览图导出是**可选**能力，需要额外装一次（不进主依赖，避免让普通用户下载十几 MB 的 Skia）：
+
+  ```bash
+  npm i -D @napi-rs/canvas
+  node node/qa.mjs --model incline --times 0.5,1.0
+  ```
+
+
 需要 Node.js（本机上已有，路径见下）。**主流程不需要 npm install**。
 
 ```powershell
