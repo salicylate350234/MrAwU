@@ -40,8 +40,16 @@ console.log('\n【4/5】生成单文件 HTML');
 run('build.mjs', ['--title', TITLE]);
 
 const pkgDir = path.join(ROOT, 'dist', '阿物先生-交付包');
-fs.rmSync(pkgDir, { recursive: true, force: true });
-fs.mkdirSync(pkgDir, { recursive: true });
+// 清空交付目录：**逐项删除**而不是整树 fs.rmSync ——
+// 本机上对整棵树做 rmSync 会让 Node 进程直接崩（exit 0xC0000409），
+// 逐项删则正常（怀疑是安全软件挂钩了批量删除）。
+if (fs.existsSync(pkgDir)) {
+  for (const e of fs.readdirSync(pkgDir)) {
+    fs.rmSync(path.join(pkgDir, e), { recursive: true, force: true });
+  }
+} else {
+  fs.mkdirSync(pkgDir, { recursive: true });
+}
 
 const htmlSrc = path.join(ROOT, 'dist', '阿物先生.html');
 // 交付文件名固定，不随 --title 变化（标题只影响页面内显示），避免每次改名后找不到文件
@@ -97,18 +105,19 @@ const readmeTxt = [
 ].join('\r\n');
 fs.writeFileSync(path.join(pkgDir, '使用说明.txt'), readmeTxt, 'utf8');
 
-// 压缩改用 node/ziputil.cjs（纯 Node 写 zip，见该文件头部说明）：
-// 早先用 spawnSync('powershell', Compress-Archive) 会让 Node 直接崩
-// （exit 0xC0000409 STATUS_STACK_BUFFER_OVERRUN），换 tar.exe 同样崩——
-// 本环境下 spawnSync 调外部程序就会崩，故彻底去掉外部命令依赖（顺带跨平台）。
+// 压缩交给**独立子进程**（node/zip-one.cjs → node/ziputil.cjs）：
+// 本机上在主进程里压缩会让 Node 直接崩（exit 0xC0000409），隔离后父进程不受影响，
+// 而且调 Node 自身的 spawnSync 在本环境是正常的（调 powershell/tar 才崩）。
 function zipDir(srcDir, outZip, entry) {
-  try {
-    const r = zip.zipDir(srcDir, outZip, entry);
-    return r;
-  } catch (e) {
-    console.log('（zip 生成失败：' + (e && e.message) + '，可手动压缩 ' + srcDir + '）');
-    return null;
+  const args = [path.join(ROOT, 'node', 'zip-one.cjs'), srcDir, outZip];
+  if (entry) args.push(entry);
+  const r = spawnSync(process.execPath, args, { stdio: 'inherit' });
+  if (r.error || r.status !== 0) {
+    console.log('（zip 生成失败：' + (r.error ? r.error.message : '子进程退出码 ' + r.status) +
+      '，可手动压缩 ' + srcDir + '）');
+    return false;
   }
+  return true;
 }
 
 console.log('\n【5/5】压缩成 zip');

@@ -1,8 +1,13 @@
 # 阿物先生 MrAwU — 物理受力分析动画生成器
 
+[![npm](https://img.shields.io/npm/v/mrawu.svg)](https://www.npmjs.com/package/mrawu)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 > **识别图片，把中学阶段的物理题目中的模型可视化。**
 >
 > 具体形态：一张题图 → 会动、能验算的受力动画。单文件 HTML，离线可用，每一帧的力都有数值，并与解析解对照。
+>
+> 命令行快速取用：`npx mrawu`（生成 `阿物先生.html` 到当前目录，无需克隆仓库）
 >
 > AI 参与情况、责任归属与会话记录查阅方式见 [AI_DISCLOSURE.md](AI_DISCLOSURE.md) ｜ 许可证：[MIT](LICENSE)
 
