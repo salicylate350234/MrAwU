@@ -156,9 +156,9 @@ DSH 客户端在本机保存完整会话记录（JSONL，zstd 压缩）：
 
 | 检查 | 结果 | 说明 |
 |---|---|---|
-| `node/tests.mjs` | 68 用例 / 400 项检查 / 0 失败 | 每个模型与解析解逐项对照，含牛顿第二定律残差上限 |
-| `node/audit.mjs` | 19/19 模型通过 | 确认没有"非零却画不出来"的力 |
-| `node/compare-engines.cjs` | 25/25 组通过 | 与独立引擎 Planck.js 对拍（末态一致） |
+| `node/tests.mjs` | 79 用例 / 495 项检查 / 0 失败 | 每个模型与解析解逐项对照，含牛顿第二定律残差上限 |
+| `node/audit.mjs` | 20/20 模型通过 | 确认没有"非零却画不出来"的力 |
+| `node/compare-engines.cjs` | 26/26 组通过 | 与独立引擎 Planck.js 对拍（末态一致） |
 | `node/check-env.mjs` | 必需项全绿 | 环境就绪 + 产物与源码同步 |
 
 复现命令见 `README.md`。
