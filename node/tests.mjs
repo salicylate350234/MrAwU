@@ -116,6 +116,21 @@ const CASES = {
     { offset: 0.5 },
     { spread: 2.2, height: 1.2, mass: 5 },
     { offset: -0.6, mass: 0.5, spread: 0.3, height: 4 }
+  ],
+  // ---- 组合模组：斜面 → 竖直圆轨道内壁 → 匀强电场（lib/models/track.js）----
+  // 解析基线已推广到一般倾角：v_B² = v0² − 2gR(1+secα)、v_crit² = v0² − 4gR·secα、
+  // v_min² = 5gR·secα（α=37° 时退化为题面给的 4.5 / 5 / 6.25 gR）。
+  trackSlopeLoopE: [
+    {},                                  // 默认 v0=10 > v_min：斜面切向加速度 0 → 过临界点 → 过 B
+    { v0: 7.0 },                         // v0 < v_min：脱离 → 按题意停止（末帧速度 0）
+    { v0: 0 },                           // 静止在斜面上（平衡场强把球"托住"）
+    { v0: 7.95 },                        // 刚过 v_min = √(6.261gR) = 7.912：贴壁裕度很小
+    { R: 0.8, v0: 12 },                  // 换半径
+    { mass: 0.2, q: 2, v0: 12 },         // 电荷/质量同比放大（E 自动跟着变，轨迹应当不变）
+    { Efac: 1.3 },                       // 非平衡场强：只校能量守恒（其余解析式不再适用）
+    { theta: 30, v0: 10 },               // 缓角：v_min=√(5·10·1.1547)=7.598，裕度 1.32×
+    { theta: 45, v0: 11 },               // v_min=√(5·10·1.4142)=8.409
+    { theta: 53, v0: 12 }                // 陡角：v_min=√(5·10·1.6616)=9.115，斜面段只剩 ~0.17 s
   ]
 };
 
@@ -157,7 +172,10 @@ Object.keys(CASES).forEach((id) => {
         (resMax > RESIDUAL_TOL ? '（绝对 ' + absMax.toFixed(4) + ' N·s 在容差内）' : '') +
         '  对照 ' + rows.length + ' 项全过');
       if (verbose) rows.forEach(r => console.log('        · ' + r.label + ': 解析 ' + r.theory.toFixed(4) +
-        ' / 仿真 ' + (r.sim == null ? '—' : r.sim.toFixed(4)) + ' (' + (r.relError == null ? '—' : (r.relError * 100).toFixed(3) + '%') + ')'));
+        ' / 仿真 ' + (r.sim == null ? '—' : r.sim.toFixed(4)) + ' (' +
+        // 按绝对容差判定的项要标"绝对"，否则会把绝对差当成百分比印出来（看着像 6% 的误差）
+        (r.relError == null ? '—' : (r.absolute ? '绝对 ' + r.relError.toFixed(4) + '，容差 ' + r.tolerance
+          : (r.relError * 100).toFixed(3) + '%')) + ')'));
     } else {
       failures++;
       failuresList.push(label);

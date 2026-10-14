@@ -180,10 +180,58 @@ cd <本目录>
 & $NODE node\qa.mjs --model belt --times 0.3,1.0,2.0
 ```
 
+### 求临界值（`node/solve.mjs`）
+
+"临界 / 最小 / 恰好"这类题要**反求参数**（例如"初速度至少多大才能不脱离圆轨道内壁"，
+就等价于"临界点法向力恰好为 0"）。`solve.mjs` 把反复试算自动化：先在 `--range` 上扫描
+观察量相对 `--target` 的符号变化，再在变化区间内二分到 `--tol`；找到后还会用同一个参数
+再跑一遍该模型自带的 `expect` 对照项，确认"临界值处整题都自洽"。
+
+```powershell
+# 斜面：求"恰好不下滑"的摩擦因数（解析 μ = tanθ = tan30° = 0.5773503）
+& $NODE node\solve.mjs --model incline --param mu --range 0:1.2 --watch accel:block:mag --target 0 --tol 1e-6
+
+# 竖直圆周：杆在最高点的作用力恰好为 0（解析 v₀ = √(5gL)；L=0.6、g=10 ⇒ 5.4772。
+# 该模型自身有约 1% 的离散耗散，工具给出 5.487，与它自己的容差一致）
+& $NODE node\solve.mjs --model circular --param v0 --range 5:6 --watch force:ball:joint `
+    --project 0,-1 --around y:max --target 0
+
+# 圆轨道内壁（组合·临界）：观察临界点的法向力，取全程最小值 = "最不利处恰好贴壁"
+& $NODE node\solve.mjs --model trackSlopeLoopE --param v0 --range 6:9 --watch normal:ball:mag --target 0
+```
+
+- `--watch` 的写法与 `lib/verify.js` 的 probe **同源**（工具读到的量就是对照表里那个量）：
+  `normal:<body>[:mag]`、`force:<body>:<comp>[:mag]`、`velocity|accel|position:<body>:mag|x|y`、
+  `eventTime:<body>:<axis>:<at>`、`stat|statDelta:<key>`。
+- `--project x,y` 指定分量方向；`--reduce min|max|last|first|mean|sum|maxAbs` 决定时间窗内怎么取一个数
+  （默认 `min`，因为临界条件的含义是"全程最不利处仍要满足"）；`--window a:b` 指定时间窗；
+  `--around <x|y|speed>:<max|min>` 把时间窗自动套在轨迹的极值点（最高点/最低点）上。
+- 扫描区间里没有符号变化时，明确报告"未找到临界值"并给出两端点值，**不外推、不猜**。
+- `--json` 输出一行 JSON（含二分区间与全部对照项）便于脚本消费；
+  退出码 0 = 找到且对照项全 PASS，1 = 找到但有对照项未通过，3 = 未找到，2 = 用法/运行错误。
+
 ### 只要一个模型的精简版
 
 在 `browser/template.html` 的模型下拉里切换即可——打包版默认包含全部模型，
 单文件也只有约 400 KB，实际没必要裁剪。
+
+### 单模型快问快答（`node/quick.mjs`）
+
+迭代物理（改参数、调受力律）时不要每次都跑全库，先用一条命令拿到秒级反馈：
+
+```powershell
+& $NODE node\quick.mjs --model incline                                      # 默认 ≤12 行
+& $NODE node\quick.mjs --model plankPush --params '{"force":20}' --brief    # ≤5 行
+```
+
+它只跑**一个**模型，回答四件事：**末态**（位置/速度）、**残差 max**、**能量漂移**、
+以及该模型 `expect()` **对照项的 PASS/FAIL 汇总**（失败时一行一条）。
+引擎默认用"交付用的那个后端"（模型声明了 `laws` 就走自研 verlet，否则走 planck），可用 `--engine planck|verlet` 覆盖。
+退出码：0 = 对照项全 PASS，1 = 有失败，2 = 用法/运行错误。
+它**不能替代**交付前的完整闸门：`node node/tests.mjs`、`node node/audit.mjs --brief`、`node node/compare-engines.cjs --brief`。
+
+> 附带说明：`node node/audit.mjs` 与 `node node/compare-engines.cjs` 支持 `--brief`（汇总 1~2 行，失败时仍打印失败详情）
+> 与 `--quiet`（只打一行结论），默认输出与退出码语义完全不变。
 
 ### 加一个新模型
 
@@ -332,6 +380,6 @@ AI 参与情况、责任归属与会话记录查阅方式，见 [`AI_DISCLOSURE.
 
 ```bash
 node node/tests.mjs        # 必须 0 失败
-node node/audit.mjs        # 必须 19/19
-node node/compare-engines.cjs   # 必须 25/25
+node node/audit.mjs        # 必须 20/20
+node node/compare-engines.cjs   # 必须 26/26
 ```

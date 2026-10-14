@@ -5,7 +5,11 @@
  * 这是"换引擎"这条路唯一的护栏：自研路径的残差 ΣJ−Δp 是代数恒等式，
  * 不再构成独立验证，必须靠对拍才能发现受力分支写错。
  *
- * 用法：node node/compare-engines.cjs [--model plankPush] [--verbose]
+ * 用法：node node/compare-engines.cjs [--model plankPush] [--verbose] [--brief] [--quiet]
+ *   （默认）   逐模型逐参数组打印完整对比
+ *   --brief   只打印汇总 1~2 行（通过组数/总组数 + 未通过清单）；未通过时仍打印失败组详情
+ *   --quiet   只打印一行结论
+ * 退出码：0 = 全部通过；1 = 有参数组未通过（三种模式语义相同）
  */
 const path = require('node:path');
 const { createRequire } = require('node:module');
@@ -21,6 +25,7 @@ const args = {};
 process.argv.slice(2).forEach((a, i, arr) => {
   if (a.startsWith('--')) args[a.slice(2)] = (arr[i + 1] && !arr[i + 1].startsWith('--')) ? arr[i + 1] : true;
 });
+const MODE = args.quiet ? 'quiet' : (args.brief ? 'brief' : 'default');
 
 // 对拍判据（按"体积优先：临界量 0.1%"的策略设计）：
 //   主判据 = verlet 的临界量对**解析解**的相对误差 ≤ 0.1%  ← 这是交付验收线
@@ -63,121 +68,165 @@ function cases(m) {
 }
 
 let failed = 0, checked = 0;
-targets.forEach(m => {
-  console.log('\n================  ' + m.id + '（' + m.title + '）  ================');
-  cases(m).forEach(c => {
-    const sceneP = models.scene(m.id, c.p, sceneLib);
-    const sceneV = models.scene(m.id, c.p, sceneLib);
-    let fp, fv;
-    // verletOnly：planck 侧没有这种力（例如双星的相互引力），
-    // 自检改为「全部对照项对解析解」，不再要求与 planck 逐帧一致。
-    const noPlanck = !!sceneP.verletOnly;
-    if (!noPlanck) {
-      try { fp = simLib.createSim(planck, sceneP, { engine: 'planck' }).record(); }
-      catch (e) { console.log('  ' + c.tag + '  planck 运行失败: ' + e.message); failed++; return; }
-    } else {
-      fp = simLib.createSim(null, sceneP, { engine: 'verlet' }).record();   // 占位，仅用于尺度统计
-    }
-    try { fv = simLib.createSim(null, sceneV, { engine: 'verlet' }).record(); }
-    catch (e) { console.log('  ' + c.tag + '  verlet 运行失败: ' + e.message); failed++; return; }
 
-    // 逐帧比对（帧数可能不同：verlet 按 meta.frames 输出，planck 相同）
-    const n = Math.min(fp.frames.length, fv.frames.length);
-    let maxPos = 0, maxVel = 0, maxForce = 0, worstFrame = -1, worstPos = 0;
-    for (let i = 0; i < n; i++) {
-      const a = fp.frames[i], b = fv.frames[i];
-      Object.keys(a.bodies).forEach(id => {
-        if (a.bodies[id].type !== 'dynamic') return;
-        const A = a.bodies[id], B = b.bodies[id];
-        if (!B) return;
-        const dp = Math.hypot(A.x - B.x, A.y - B.y);
-        const dv = Math.hypot(A.vx - B.vx, A.vy - B.vy);
-        if (dp > maxPos) { maxPos = dp; worstFrame = i; }
-        if (dv > maxVel) maxVel = dv;
-        const df = Math.hypot(A.forces.total[0] - B.forces.total[0], A.forces.total[1] - B.forces.total[1]);
-        if (df > maxForce) maxForce = df;
-      });
-    }
+/**
+ * 跑一组参数，返回 { crash, pass, lines }
+ * lines 与默认模式的输出逐字一致（不在此函数里打印，便于 --brief/--quiet 按需裁剪）
+ */
+function runCase(m, c) {
+  const lines = [];
+  const sceneP = models.scene(m.id, c.p, sceneLib);
+  const sceneV = models.scene(m.id, c.p, sceneLib);
+  let fp, fv;
+  // verletOnly：planck 侧没有这种力（例如双星的相互引力），
+  // 自检改为「全部对照项对解析解」，不再要求与 planck 逐帧一致。
+  const noPlanck = !!sceneP.verletOnly;
+  if (!noPlanck) {
+    try { fp = simLib.createSim(planck, sceneP, { engine: 'planck' }).record(); }
+    catch (e) { return { crash: true, lines: ['  ' + c.tag + '  planck 运行失败: ' + e.message] }; }
+  } else {
+    fp = simLib.createSim(null, sceneP, { engine: 'verlet' }).record();   // 占位，仅用于尺度统计
+  }
+  try { fv = simLib.createSim(null, sceneV, { engine: 'verlet' }).record(); }
+  catch (e) { return { crash: true, lines: ['  ' + c.tag + '  verlet 运行失败: ' + e.message] }; }
 
-    // 临界量：相对滑动位移（只有"板-块"这类双体接触模型才有意义）
-    const dynIds = Object.keys(fp.frames[0].bodies).filter(id => fp.frames[0].bodies[id].type === 'dynamic');
-    const hasPair = !!(fp.frames[0].bodies.block && fp.frames[0].bodies.board);
-    function maxRel(frames) {
-      if (!hasPair) return null;
-      const d0 = frames[0].bodies.block.x - frames[0].bodies.board.x;
-      let mx = 0;
-      frames.forEach(f => {
-        const d = Math.abs((f.bodies.block.x - f.bodies.board.x) - d0);
-        if (d > mx) mx = d;
-      });
-      return mx;
-    }
-    const relP = maxRel(fp.frames), relV = maxRel(fv.frames);
-    // 主判据：模型自带的全部对照项（解析 vs 仿真）必须通过——这是通用判据，不依赖具体模型
-    const tableV = verifyLib.run(m, c.p, fv.frames, sceneV) || [];
-    const tableP = verifyLib.run(m, c.p, fp.frames, sceneP) || [];
-    const badV = tableV.filter(it => it.pass === false);
-    const badP = tableP.filter(it => it.pass === false);
-    let worstV = 0, worstP = 0;
-    tableV.forEach(it => { if (it.relError != null) worstV = Math.max(worstV, Math.abs(it.relError)); });
-    tableP.forEach(it => { if (it.relError != null) worstP = Math.max(worstP, Math.abs(it.relError)); });
-
-    // 末态一致性 + 运动尺度（用于把偏差归一化）。
-    // 尺度取"整段行程/最大速率"，并给绝对底：静止类（推不动）与停止类（摩擦拖停）
-    // 的尺度会趋近 0，没有绝对底就会除出无意义的百分比。
-    // 末态取 95% 时刻而不是最后一帧：落地/碰撞那一帧两个引擎的处置方式天然不同
-    // （谁把速度清零、谁还留着冲击速度），拿来互比没有意义，属于帧级实现细节。
-    const nEnd = Math.max(1, Math.round((n - 1) * 0.95));
-    let endPos = 0, endVel = 0, scalePos = 0, scaleVel = 0;
-    dynIds.forEach(id => {
-      const A0 = fp.frames[0].bodies[id];
-      // 允许 ±5 帧的时间偏移：周期运动（圆周/振动）对微小周期差极敏感，
-      // 同一时刻的位置可以差很多，但那是相位差不是物理错误。
-      let bp = Infinity, bv = Infinity;
-      for (let k = Math.max(0, nEnd - 5); k <= Math.min(n - 1, nEnd + 5); k++) {
-        const A1 = fp.frames[nEnd].bodies[id], B1 = fv.frames[k].bodies[id];
-        if (!A1 || !B1) continue;
-        bp = Math.min(bp, Math.hypot(A1.x - B1.x, A1.y - B1.y));
-        bv = Math.min(bv, Math.hypot(A1.vx - B1.vx, A1.vy - B1.vy));
-      }
-      if (isFinite(bp)) { endPos = Math.max(endPos, bp); endVel = Math.max(endVel, bv); }
-      fp.frames.forEach(f => {
-        const b = f.bodies[id];
-        scalePos = Math.max(scalePos, Math.abs(b.x - A0.x), Math.abs(b.y - A0.y));
-        scaleVel = Math.max(scaleVel, Math.hypot(b.vx, b.vy));
-      });
+  // 逐帧比对（帧数可能不同：verlet 按 meta.frames 输出，planck 相同）
+  const n = Math.min(fp.frames.length, fv.frames.length);
+  let maxPos = 0, maxVel = 0, maxForce = 0, worstFrame = -1, worstPos = 0;
+  for (let i = 0; i < n; i++) {
+    const a = fp.frames[i], b = fv.frames[i];
+    Object.keys(a.bodies).forEach(id => {
+      if (a.bodies[id].type !== 'dynamic') return;
+      const A = a.bodies[id], B = b.bodies[id];
+      if (!B) return;
+      const dp = Math.hypot(A.x - B.x, A.y - B.y);
+      const dv = Math.hypot(A.vx - B.vx, A.vy - B.vy);
+      if (dp > maxPos) { maxPos = dp; worstFrame = i; }
+      if (dv > maxVel) maxVel = dv;
+      const df = Math.hypot(A.forces.total[0] - B.forces.total[0], A.forces.total[1] - B.forces.total[1]);
+      if (df > maxForce) maxForce = df;
     });
-    const posTol = Math.max(0.05, TOL.endPos * scalePos);      // 位置：5 cm 或行程的 1%
-    const velTol = Math.max(0.01, 0.02 * scaleVel);            // 速度：1 cm/s 或最大速率的 2%（周期运动允许相位差）
-    const frameTol = Math.max(0.08, TOL.pos * scalePos);       // 逐帧粗错护栏
+  }
 
-    const okCrit = badV.length === 0;                          // 主判据：全部对照项通过
-    const okEnd = endPos <= posTol && endVel <= velTol;        // 副判据：末态一致
-    const okPos = maxPos <= frameTol;                          // 粗错护栏
-    const pass = okCrit && okEnd && okPos;
-    checked++;
-    if (!pass) failed++;
-    console.log('  ' + (pass ? 'PASS' : 'FAIL') + '  ' + c.tag + (noPlanck ? '  【仅自研引擎：planck 无此力，自检对解析解】' : ''));
-    console.log('        对照项：verlet ' + (tableV.length - badV.length) + '/' + tableV.length +
-      ' 通过（最大误差 ' + (worstV * 100).toFixed(3) + '%）' +
-      (noPlanck ? '' : ' | planck ' + (tableP.length - badP.length) + '/' + tableP.length +
-        ' 通过（最大误差 ' + (worstP * 100).toFixed(3) + '%）') +
-      (badV.length ? '  ✗ ' + badV.map(x => x.label).join('、') : '  ✓'));
-    if (relV != null) {
-      console.log('        最大相对滑动 L_min：planck ' + relP.toFixed(4) + ' | verlet ' + relV.toFixed(4) +
-        '（差 ' + (Math.abs(relV - relP) / Math.max(relP, 1e-3) * 100).toFixed(3) + '%）');
+  // 临界量：相对滑动位移（只有"板-块"这类双体接触模型才有意义）
+  const dynIds = Object.keys(fp.frames[0].bodies).filter(id => fp.frames[0].bodies[id].type === 'dynamic');
+  const hasPair = !!(fp.frames[0].bodies.block && fp.frames[0].bodies.board);
+  function maxRel(frames) {
+    if (!hasPair) return null;
+    const d0 = frames[0].bodies.block.x - frames[0].bodies.board.x;
+    let mx = 0;
+    frames.forEach(f => {
+      const d = Math.abs((f.bodies.block.x - f.bodies.board.x) - d0);
+      if (d > mx) mx = d;
+    });
+    return mx;
+  }
+  const relP = maxRel(fp.frames), relV = maxRel(fv.frames);
+  // 主判据：模型自带的全部对照项（解析 vs 仿真）必须通过——这是通用判据，不依赖具体模型
+  const tableV = verifyLib.run(m, c.p, fv.frames, sceneV) || [];
+  const tableP = verifyLib.run(m, c.p, fp.frames, sceneP) || [];
+  const badV = tableV.filter(it => it.pass === false);
+  const badP = tableP.filter(it => it.pass === false);
+  let worstV = 0, worstP = 0;
+  tableV.forEach(it => { if (it.relError != null) worstV = Math.max(worstV, Math.abs(it.relError)); });
+  tableP.forEach(it => { if (it.relError != null) worstP = Math.max(worstP, Math.abs(it.relError)); });
+
+  // 末态一致性 + 运动尺度（用于把偏差归一化）。
+  // 尺度取"整段行程/最大速率"，并给绝对底：静止类（推不动）与停止类（摩擦拖停）
+  // 的尺度会趋近 0，没有绝对底就会除出无意义的百分比。
+  // 末态取 95% 时刻而不是最后一帧：落地/碰撞那一帧两个引擎的处置方式天然不同
+  // （谁把速度清零、谁还留着冲击速度），拿来互比没有意义，属于帧级实现细节。
+  const nEnd = Math.max(1, Math.round((n - 1) * 0.95));
+  let endPos = 0, endVel = 0, scalePos = 0, scaleVel = 0;
+  dynIds.forEach(id => {
+    const A0 = fp.frames[0].bodies[id];
+    // 允许 ±5 帧的时间偏移：周期运动（圆周/振动）对微小周期差极敏感，
+    // 同一时刻的位置可以差很多，但那是相位差不是物理错误。
+    let bp = Infinity, bv = Infinity;
+    for (let k = Math.max(0, nEnd - 5); k <= Math.min(n - 1, nEnd + 5); k++) {
+      const A1 = fp.frames[nEnd].bodies[id], B1 = fv.frames[k].bodies[id];
+      if (!A1 || !B1) continue;
+      bp = Math.min(bp, Math.hypot(A1.x - B1.x, A1.y - B1.y));
+      bv = Math.min(bv, Math.hypot(A1.vx - B1.vx, A1.vy - B1.vy));
     }
-    console.log('        末态一致性：位置 ' + endPos.toExponential(2) + ' m（限 ' + posTol.toFixed(3) +
-      ' m）, 速度 ' + endVel.toExponential(2) + ' m/s（限 ' + velTol.toFixed(3) + ' m/s）  ' +
-      (okEnd ? '✓' : '✗') + '   行程 ' + scalePos.toFixed(3) + ' m / 最大速率 ' + scaleVel.toFixed(2) + ' m/s');
-    console.log('        【诊断】逐帧最大偏差：位置 ' + maxPos.toFixed(4) + ' m（第' + worstFrame +
-      '帧）, 速度 ' + maxVel.toFixed(4) + ' m/s, 合力 ' + maxForce.toFixed(3) + ' N');
-    if (!okEnd) console.log('        ✗ 末态偏差过大');
-    if (!okPos) console.log('        ✗ 逐帧位置偏差过大（疑似受力分支写错）');
+    if (isFinite(bp)) { endPos = Math.max(endPos, bp); endVel = Math.max(endVel, bv); }
+    fp.frames.forEach(f => {
+      const b = f.bodies[id];
+      scalePos = Math.max(scalePos, Math.abs(b.x - A0.x), Math.abs(b.y - A0.y));
+      scaleVel = Math.max(scaleVel, Math.hypot(b.vx, b.vy));
+    });
+  });
+  const posTol = Math.max(0.05, TOL.endPos * scalePos);      // 位置：5 cm 或行程的 1%
+  const velTol = Math.max(0.01, 0.02 * scaleVel);            // 速度：1 cm/s 或最大速率的 2%（周期运动允许相位差）
+  const frameTol = Math.max(0.08, TOL.pos * scalePos);       // 逐帧粗错护栏
+
+  const okCrit = badV.length === 0;                          // 主判据：全部对照项通过
+  const okEnd = endPos <= posTol && endVel <= velTol;        // 副判据：末态一致
+  const okPos = maxPos <= frameTol;                          // 粗错护栏
+  const pass = okCrit && okEnd && okPos;
+
+  lines.push('  ' + (pass ? 'PASS' : 'FAIL') + '  ' + c.tag + (noPlanck ? '  【仅自研引擎：planck 无此力，自检对解析解】' : ''));
+  lines.push('        对照项：verlet ' + (tableV.length - badV.length) + '/' + tableV.length +
+    ' 通过（最大误差 ' + (worstV * 100).toFixed(3) + '%）' +
+    (noPlanck ? '' : ' | planck ' + (tableP.length - badP.length) + '/' + tableP.length +
+      ' 通过（最大误差 ' + (worstP * 100).toFixed(3) + '%）') +
+    (badV.length ? '  ✗ ' + badV.map(x => x.label).join('、') : '  ✓'));
+  if (relV != null) {
+    lines.push('        最大相对滑动 L_min：planck ' + relP.toFixed(4) + ' | verlet ' + relV.toFixed(4) +
+      '（差 ' + (Math.abs(relV - relP) / Math.max(relP, 1e-3) * 100).toFixed(3) + '%）');
+  }
+  lines.push('        末态一致性：位置 ' + endPos.toExponential(2) + ' m（限 ' + posTol.toFixed(3) +
+    ' m）, 速度 ' + endVel.toExponential(2) + ' m/s（限 ' + velTol.toFixed(3) + ' m/s）  ' +
+    (okEnd ? '✓' : '✗') + '   行程 ' + scalePos.toFixed(3) + ' m / 最大速率 ' + scaleVel.toFixed(2) + ' m/s');
+  lines.push('        【诊断】逐帧最大偏差：位置 ' + maxPos.toFixed(4) + ' m（第' + worstFrame +
+    '帧）, 速度 ' + maxVel.toFixed(4) + ' m/s, 合力 ' + maxForce.toFixed(3) + ' N');
+  if (!okEnd) lines.push('        ✗ 末态偏差过大');
+  if (!okPos) lines.push('        ✗ 逐帧位置偏差过大（疑似受力分支写错）');
+
+  return { crash: false, pass, lines };
+}
+
+const defaultOut = [];       // 默认模式的完整输出（顺序与旧版逐字一致）
+const failedBlocks = [];     // brief 模式下要展开的失败组
+const failedTags = [];
+
+targets.forEach(m => {
+  if (MODE === 'default') defaultOut.push('\n================  ' + m.id + '（' + m.title + '）  ================');
+  cases(m).forEach(c => {
+    const r = runCase(m, c);
+    if (r.crash) {
+      failed++;
+    } else {
+      checked++;
+      if (!r.pass) failed++;
+    }
+    if (MODE === 'default') {
+      r.lines.forEach(l => defaultOut.push(l));
+    } else if (r.crash || !r.pass) {
+      failedTags.push(m.id + '[' + c.tag + ']');
+      failedBlocks.push('\n================  ' + m.id + '（' + m.title + '） · ' + c.tag + '  ================');
+      r.lines.forEach(l => failedBlocks.push(l));
+    }
   });
 });
 
-console.log('\n' + '='.repeat(64));
-console.log('对拍结果：' + checked + ' 组，' + (failed ? failed + ' 组未通过' : '全部通过') +
-  '（主判据：verlet 全部对照项通过；副判据：末态与 planck 一致 ≤1% 量级）');
+const passed = Math.max(0, checked - failed);
+
+if (MODE === 'default') {
+  defaultOut.forEach(l => console.log(l));
+  console.log('\n' + '='.repeat(64));
+  console.log('对拍结果：' + checked + ' 组，' + (failed ? failed + ' 组未通过' : '全部通过') +
+    '（主判据：verlet 全部对照项通过；副判据：末态与 planck 一致 ≤1% 量级）');
+} else if (MODE === 'quiet') {
+  console.log('双引擎对拍：' + passed + '/' + checked + ' 组通过' +
+    (failed ? '，未通过：' + failedTags.join('、') : ''));
+} else {
+  console.log('双引擎对拍：' + passed + '/' + checked + ' 组通过（' + targets.length + ' 个模型）' +
+    (failed ? '，未通过 ' + failed + ' 组：' + failedTags.join('、')
+            : '（主判据：verlet 全部对照项通过；副判据：末态与 planck 一致 ≤1% 量级）'));
+  if (failed) {
+    console.log('失败详情：');
+    failedBlocks.forEach(l => console.log(l));
+  }
+}
 process.exit(failed ? 1 : 0);

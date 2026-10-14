@@ -40,12 +40,12 @@ const ENGINE = args.engine === 'planck' ? 'planck' : 'verlet';
 // 顺序有意义：各 lib 在加载时就解析自己的依赖（浏览器端 UMD），
 // 所以 scene 必须在最前、verlet 必须在 sim 之前。
 const LIB_FILES = [
-  'lib/scene.js', 'lib/field.js', 'lib/compose.js', 'lib/verlet.js', 'lib/world.js', 'lib/sim.js', 'lib/verify.js',
+  'lib/scene.js', 'lib/field.js', 'lib/compose.js', 'lib/track.js', 'lib/verlet.js', 'lib/world.js', 'lib/sim.js', 'lib/verify.js',
   'lib/draw.js', 'lib/graph.js'
 ];
 const MODEL_FILES = [
   'lib/models/shared.js', 'lib/models/mechanics.js', 'lib/models/motion.js',
-  'lib/models/gravity.js', 'lib/models/electric.js', 'lib/models/combo.js', 'lib/models/index.js'
+  'lib/models/gravity.js', 'lib/models/electric.js', 'lib/models/combo.js', 'lib/models/track.js', 'lib/models/index.js'
 ];
 
 function read(rel) {

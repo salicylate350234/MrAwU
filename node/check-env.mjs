@@ -49,8 +49,8 @@ if (fs.existsSync(planckPath)) {
 // 2. 源码文件完整性
 const REQUIRED = [
   'SKILL.md', 'README.md', 'CHECKLIST.md',
-  'lib/scene.js', 'lib/compose.js', 'lib/world.js', 'lib/sim.js', 'lib/verify.js', 'lib/draw.js', 'lib/graph.js', 'lib/field.js', 'lib/verlet.js',
-  'lib/models/index.js', 'lib/models/shared.js', 'lib/models/mechanics.js', 'lib/models/motion.js', 'lib/models/gravity.js', 'lib/models/electric.js', 'lib/models/combo.js',
+  'lib/scene.js', 'lib/compose.js', 'lib/track.js', 'lib/world.js', 'lib/sim.js', 'lib/verify.js', 'lib/draw.js', 'lib/graph.js', 'lib/field.js', 'lib/verlet.js',
+  'lib/models/index.js', 'lib/models/shared.js', 'lib/models/mechanics.js', 'lib/models/motion.js', 'lib/models/gravity.js', 'lib/models/electric.js', 'lib/models/combo.js', 'lib/models/track.js',
   'browser/template.html', 'browser/player.js',
   'node/sim.mjs', 'node/tests.mjs', 'node/build.mjs', 'node/qa.mjs', 'node/audit.mjs', 'node/package.mjs',
   'node/compare-engines.cjs', 'node/bench.cjs', 'node/engine-report.cjs', 'node/evalcheck.cjs',
