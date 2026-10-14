@@ -569,6 +569,104 @@ cases += comp.cases;
   checks += 0;
 }
 
+// ---- 12. potentialCurve 组件：−∇U=F、E_p(x) 本体、定义域外抛错（解析导数 / 中心差分两版） ----
+const failsBefore12 = comp.fails;
+{
+  const K1 = 0.5, K2 = 2.0, XP = 3, EPMIN = 2;
+  const Ep = (xx) => { const d = xx - XP; return (xx <= XP ? K1 : K2) * d * d + EPMIN; };
+  const dEp = (xx) => { const d = xx - XP; return 2 * (xx <= XP ? K1 : K2) * d; };
+  // ① F_e = −dE_p/dx（解析导数版）：x=1 → +2 N；x=3 → 0；x=4 → −4 N
+  const cAn = F.potentialCurve({ body: 'ball', curve: Ep, dEdx: dEp, xMin: 0.5, xMax: 4.5, part: 'electric' });
+  chk('potentialCurve：F_e(x=1) = −dE_p/dx = +2 N（图线下降段 ⇒ 力沿 +x）',
+    cAn.force(ctxOf(st1(1, 0)))[0], 2, 1e-12);
+  chk('potentialCurve：F_e(x=3) = 0 N（图线最低点 ⇒ 该处电场力为 0）',
+    cAn.force(ctxOf(st1(3, 0)))[0], 0, 1e-12);
+  chk('potentialCurve：F_e(x=4) = −4 N（右支更陡 ⇒ 力沿 −x）',
+    cAn.force(ctxOf(st1(4, 0)))[0], -4, 1e-12);
+  chk('potentialCurve：potential 返回 E_p 本体 E_p(1) = 4 J（mgy 由引擎另加）',
+    cAn.potential(ctxOf(st1(1, 0))), 4, 1e-12);
+  chk('potentialCurve：E_p(3) = 2 J（最低点 P）', cAn.potential(ctxOf(st1(3, 0))), 2, 1e-12);
+  chk('potentialCurve：E_p(4) = 4 J（右支更陡，与左支同高）', cAn.potential(ctxOf(st1(4, 0))), 4, 1e-12);
+  ok('potentialCurve：分项名可配置（本题 = electric ⇒ 受力表显示"电场力 F电"）',
+    cAn.part === 'electric', cAn.part);
+  // ② −∇U = F：中心差分独立核对（采样点避开 x=3 折点：那里 E_p 只有一阶导连续）
+  const pairA = F.assertPairing([cAn], [st1(1, 0), st1(2.4, 0), st1(3.6, 0), st1(4.2, 0)], { tol: 1e-6 });
+  ok('potentialCurve：assertPairing 解析导数版 −∇U = F', pairA.ok,
+    '最大相对偏差 ' + pairA.rows[0].rel.toExponential(2));
+  // ③ 不给 dEdx ⇒ 中心差分（步长自适应 h = 1e-6·max(1,|x|)），力一致
+  const cNum = F.potentialCurve({ body: 'ball', curve: Ep, xMin: 0.5, xMax: 4.5 });
+  chk('potentialCurve：无 dEdx（中心差分）时 F_e(x=1) 仍 = +2 N', cNum.force(ctxOf(st1(1, 0)))[0], 2, 1e-6);
+  chk('potentialCurve：无 dEdx 时 F_e(x=4) 仍 = −4 N', cNum.force(ctxOf(st1(4, 0)))[0], -4, 1e-6);
+  const pairN = F.assertPairing([cNum], [st1(1, 0), st1(3.6, 0), st1(4.2, 0)], { tol: 1e-6 });
+  ok('potentialCurve：assertPairing 数值导数版（无 dEdx）−∇U = F', pairN.ok,
+    '最大相对偏差 ' + pairN.rows[0].rel.toExponential(2));
+  ok('potentialCurve：缺省分项 = applied（通用保守力）；曲线属电场时必须显式给 electric',
+    cNum.part === 'applied', cNum.part);
+  // ④ 定义域外**抛错并打印实测 x**（不许外推给假值）
+  let thrLo = null, thrHi = null;
+  try { cAn.potential(ctxOf(st1(0.2, 0))); } catch (e) { thrLo = e; }
+  ok('potentialCurve：x < xMin ⇒ potential 抛错且 message 打印实测 x', !!thrLo && thrLo.message.includes('x = 0.2'),
+    thrLo ? thrLo.message.slice(0, 96) + '…' : '竟然没抛错');
+  try { cAn.force(ctxOf(st1(5.0, 0))); } catch (e) { thrHi = e; }
+  ok('potentialCurve：x > xMax ⇒ force 同样抛错（力/势能同一判据）', !!thrHi && thrHi.message.includes('x = 5'),
+    thrHi ? thrHi.message.slice(0, 96) + '…' : '竟然没抛错');
+}
+// ---- 13. potentialWellBlock：题设判据（v(3)、x_N<3、ΔE_p、能量记账、停止点） ----
+{
+  const model = models.get('potentialWellBlock');
+  const params = models.defaults(model);
+  const scene = models.scene('potentialWellBlock', params, sceneLib);
+  const frames = simLib.createSim(planck, scene).record().frames;
+  const M = model.build._math(params);
+  const m = params.mass, fMax = params.mu * m * params.g;
+  const xs = frames.map((f) => f.bodies.block.x), vs = frames.map((f) => f.bodies.block.vx);
+  const EpOf = (i) => frames[i].stats.mechanical - frames[i].stats.kinetic;   // mgy 恒定 ⇒ 差就是 E_p
+  // 帧内线性插值：首次到达 x* 的帧号 / 时刻 / 速度
+  const crossAt = (star) => {
+    for (let i = 1; i < xs.length; i++) {
+      if (xs[i - 1] < star && xs[i] >= star) {
+        const fr = (star - xs[i - 1]) / (xs[i] - xs[i - 1]);
+        return { i: i, t: frames[i - 1].t + fr * (frames[i].t - frames[i - 1].t),
+                 v: vs[i - 1] + fr * (vs[i] - vs[i - 1]) };
+      }
+    }
+    return null;
+  };
+  const at3 = crossAt(3);
+  ok('【1】v(x=3 m) = 2 m/s（<1%）：电场做功 +2 J、摩擦做功 −2 J ⇒ ΔEk = 0',
+    !!at3 && Math.abs(at3.v - M.vAt3) / M.vAt3 < 0.01,
+    '仿真实测 v(3) = ' + (at3 ? at3.v.toFixed(6) : '—') + ' m/s vs 解析 ' + M.vAt3.toFixed(6) +
+    ' m/s（偏差 ' + (at3 ? (Math.abs(at3.v - M.vAt3) / M.vAt3 * 100).toFixed(4) : '—') + '%）');
+  let iN = 0;
+  vs.forEach((vv, i) => { if (vv > vs[iN]) iN = i; });
+  ok('【2】速度最大点 x_N < 3 m（净力为零要求 F_e = f = ' + fMax.toFixed(2) + ' N；x=3 处 F_e = 0）',
+    xs[iN] < 3,
+    '仿真实测 x_N = ' + xs[iN].toFixed(4) + ' m、v_max = ' + vs[iN].toFixed(6) + ' m/s（解析 x_N = ' +
+    M.xN.toFixed(4) + ' m、v_max = √5 = ' + M.vMax.toFixed(6) + ' m/s）');
+  const dEpMeas = EpOf(at3.i) - EpOf(0);
+  ok('【3】x=1→3 m 电势能减少 2 J（实测）', Math.abs(dEpMeas + 2) / 2 < 0.01,
+    '实测 E_p(1 m) = ' + EpOf(0).toFixed(5) + ' J → E_p(x=' + xs[at3.i].toFixed(4) + ' m) = ' +
+    EpOf(at3.i).toFixed(5) + ' J，ΔE_p = ' + dEpMeas.toFixed(5) + ' J（要求 −2 J，偏差 ' +
+    (Math.abs(dEpMeas + 2) / 2 * 100).toFixed(4) + '%）');
+  // 【4】能量记账：KE + E_p 的减少量（引擎 stats.mechanical 首末帧之差）= 摩擦生热 ∫μmg|dx|
+  let heat = 0, path = 0;
+  for (let i = 1; i < xs.length; i++) { const d = Math.abs(xs[i] - xs[i - 1]); path += d; heat += fMax * d; }
+  const drop = frames[0].stats.mechanical - frames[frames.length - 1].stats.mechanical;
+  ok('【4】KE + E_p 的减少量 = 摩擦生热（电场保守；路径长 ' + path.toFixed(4) + ' m）',
+    Math.abs(drop - heat) / heat < 0.01,
+    'KE+E_p 减少 ' + drop.toFixed(5) + ' J、摩擦生热 μmg·s = ' + fMax.toFixed(2) + ' N × ' + path.toFixed(5) +
+    ' m = ' + heat.toFixed(5) + ' J（差 ' + (drop - heat).toExponential(3) + ' J，偏差 ' +
+    (Math.abs(drop - heat) / heat * 100).toFixed(4) + '%）');
+  // 【5】末态：静摩擦咬住（|F_e| ≤ μmg）且速度归零
+  const xEnd = xs[xs.length - 1], vEnd = vs[vs.length - 1];
+  ok('【5】末态停止且静摩擦咬住 |F_e| ≤ μmg（不再滑动）',
+    Math.abs(vEnd) < 1e-3 && Math.abs(M.Fe(xEnd)) <= fMax + 1e-9,
+    '末帧 v = ' + vEnd.toExponential(2) + ' m/s、x = ' + xEnd.toFixed(5) + ' m（解析停点 x = ' +
+    M.t.xStop.toFixed(5) + ' m）、|F_e| = ' + Math.abs(M.Fe(xEnd)).toFixed(5) + ' N ≤ μmg = ' +
+    fMax.toFixed(2) + ' N');
+}
+failures += comp.fails - failsBefore12;   // 12/13 两段用的是组件级计数器，补记进总失败数
+
 console.log('');
 console.log('用例 ' + cases + ' 个，检查项 ' + (checks + comp.checks) + ' 项（模型 ' + checks +
   ' + 力组件 ' + comp.checks + '），失败 ' + failures + ' 项');if (failures) {
