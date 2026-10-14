@@ -46,6 +46,63 @@
    机械能根本不守恒 ✗。`potential` 只放引擎不会算的项：万有引力势 `−Gm₁m₂/r`（`gravity.js:82`）、
    电势能 `−qEx`（`electric.js:292`，注意零场区必须写 `Math.min` 钳成常量）。
 
+## 2.5 `lib/pacing.js` —— 动画时长/步长标定（**时长由解析总时间决定**）
+
+约定：**不再固定 `dt = 1/60 s`**。固定步长只在"秒级宏观"题上成立；电子/微观题总时间常在
+ns~μs 量级，固定步长会把整段运动挤进一帧（实测 `efieldDeflect` 真实电子参数：只出 **1 帧**，
+加速度仿真 −1200 vs 解析 −1e10 m/s²）。所有模型都应把解析总时间交给 `pacing()`。
+
+```js
+var pacing = require('../pacing.js').pacing;      // 浏览器：window.PFA.pacing.pacing
+var pace = pacing({ tTotal: L.dur, frames: 600, subSteps: 8 });
+// → { duration, dt, subSteps, frames, tTotal, margin }
+//   duration = tTotal × 1.02（默认 2% 余量）；dt = duration / frames（frames 默认 600，
+//   被 minFrames(520)/maxFrames(4000) 约束）；subSteps 原样返回（离散化敏感度由模型定）
+```
+- `tTotal ≤ 0` / NaN / `frames < 1` / `minFrames > maxFrames` 一律**抛错并打印入参**，不静默兜底。
+- 极端尺度稳：`tTotal ∈ [1e-10, 1e3] s`（只做除法，不按秒取整）。
+- ⚠️ **配套的引擎修复**（`lib/verlet.js`）：早期 `advanceTo` 用绝对容差 `t < tTarget − 1e-12`
+  当停止条件，微观尺度下（`dtSim = 8.5e-13 s`）**每帧少走 1 个子步**、时间永远差 12.5%
+  （帧内平均加速度 −8.75e9 vs −1e10）。现在改成步进精确 + 事件时刻作为推进上限 +
+  `laws.enter`（事件时刻的入场处理）也会被调用。改这三处后 495 项回归保持 0 失败。
+
+### 2.6 `pacing.assertResolution()` —— "整段挤进一帧"的兜底闸门
+
+```js
+var assertResolution = require('../pacing.js').assertResolution;   // 浏览器：window.PFA.pacing.assertResolution
+var pace = pacing({ tTotal: 解析总时间, frames: 600, subSteps: 8 });
+assertResolution({ duration: pace.duration, characteristicTime: pace.dt / pace.subSteps,
+                   frames: pace.frames, minFramesPerChar: 50 });
+// → { duration, characteristicTime, frames, minFramesPerChar, ratio }；不达标**抛错并打印实际数值**
+```
+- **语义**：`characteristicTime` 传的是**引擎内层实际步长**（`dt / subSteps`，再加 `1e-12 s`
+  的浮点地板），不是题目总时间。于是判据 `duration / characteristicTime >= 50` 等价于
+  **"整段至少 50 个内层步"**（正常走 `pacing()` 时恒等于 `frames × subSteps ≥ 3000`；
+  注意该比值只反映"步长是否跟着解析总时间走"，与题目参数无关）。
+- **它拦的是"模型自己固定步长"**：若把 §① 那个 4 ns 电子题按旧写法（`duration = 1/60 s`、
+  4 子步）交上来 → `duration/内层步 = 4.0 < 50` 直接抛错，而不是给出"落地 / 偏转在第一帧
+  就完成了"的动画（自测见 `node/_assert_probe.cjs --bad`）。
+- 已接入：`lib/models/motion.js` 的 `projectile`、`lib/models/mechanics.js` 的 `freefall`
+  （两者时长改为由**解析滞空 / 落地时间**反推）。
+
+### 2.7 为什么其余模型**故意保留固定时长**（不需要 pacing）
+
+用户的要求是"所有题目都按解析总时间定时长"。本轮迁移了两个"时间随参数变化明显"的低风险
+模型（`projectile`、`freefall`）；其余 11 个评估后**保留固定 / 参数化时长**，理由分四类：
+
+| 类 | 为什么固定时长是对的 |
+|---|---|
+| 秒级宏观题（`energy`、`collision`、`circular`、`balance`、`atwood`） | `dt = 1/60 s` 本来就有 30 ~ 200 帧，特征时间 0.5 ~ 10 s；时长就是用户滑杆的"演示时长"，改成"解析总时间"只会把过程之外的静止段一起拉长 |
+| 时长已由**解析周期**推出（`spring`、`pendulum`、`wave` 等） | `T = 2π√(m/k)` / `2π√(L/g)` 本身就是解析量，与"按解析总时间定时长"等价 |
+| 时长已按**解析位移**反推行程（`incline`、`connector`） | 几何随"演示时长 × 解析加速度"自动展开（`inclineEdgeLen`），不存在采样不足 |
+| 时长由**解析时间表**驱动（`belt`、`plank`、`plankPush` 等） | 共速 / 相对滑动结束这类时刻由 `nextEvents` 精确触发，帧内事件不会丢 |
+
+判据：只有当"题目特征时间可能比 `1/60 s` 小几个量级"时固定步长才退化；上面各条都满足
+`特征时间 ≫ dt`，所以保留固定时长不产生采样问题。`assertResolution` 就是这条判断的兜底 ——
+以后谁把某个模型推到微观参数（或固定一个过小的 frames），它会立刻抛错，不会静默给出垃圾。
+详见 `references/pitfalls.md` 的 ③。
+
+
 ## 3. 力表形状与渲染映射
 
 - 八个分项**固定**：`gravity, gravitation, electric, normal, friction, joint, applied, damping`
@@ -83,6 +140,7 @@
 | `noGraph` | 不画 x-t/v-t | `false` |
 | `compose` / `stages` / `handoffs` | 组合模组实例 + 阶段表 + 交接记录（后两者缺省会从 `compose` 推） | `null` |
 | `analysisAxis` | `[xAxis, yAxis]`，受力小窗建系 | `null` |
+| `display` | `{ scaleY, note, target, vertical }`，**过小就放大并标注**：`scaleY` 只作用于物体位置与轨迹的绘制（力/速度箭头、尺寸读数一律真实）。未登记会被 `normalize()` 静默丢弃 ⚠️ | `null`（scopeY≠1 才生效） |
 | `params` / `expect` / `tags` | `index.js` 会自动回填 `params`；`expect` 供对照表用 | `null`/`null`/`[]` |
 
 ## 5. `expect` 探针规格（`lib/verify.js` `measure`/`run`）

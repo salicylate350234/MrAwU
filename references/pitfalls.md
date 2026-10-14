@@ -58,3 +58,75 @@
 - `scene.js` 的 `normalize()` 只放行认识的字面量：新增场景字段必须同时登记，否则**静默丢弃**。
 - 刚体 `kind` 必须在 `shapePoints/shapeArea/shapeBounds` 三处都认识，否则几何退化成 `[[0,0],[0,0]]`（**解析路径**不受此限：`lib/track.js` 的 `kind:line/arc` 是路径声明、不是刚体形状）。
 - 已被真实读取但不在白名单表里的项：`meta.energyRefY`、刚体 `includeInBounds`、刚体 `sign`。
+- 本轮新增并已登记：`scene.display`（`{scaleY, note, target, vertical}`，见 api-index §4），
+  以及 `lib/pacing.js` 的 `pacing()` 接口（见 api-index §2.5）。
+
+### ① 固定 `dt = 1/60 s` 在 ns 尺度题目上会退化成一帧（实测）
+
+- 现象：真实电子题（L=4 cm、E=91/1600 V/m、m=9.1e-31 kg、q=1.6e-19 C、v₀=2e7 m/s，
+  解析总时间 t = 4e-9 s）跑 `efieldDeflect`：
+  ```
+  时长 0.00 s / 1 帧（dt = 1/60 s，8 子步）
+  场区内加速度  解析 −1.0e10 m/s²  vs  仿真 −1200 m/s²（差 100%，FAIL）
+  出板偏移 y₁   解析 −2.0e-8 m   vs  仿真 −0.3333 m
+  ```
+  整个 4 ns 的过程落在 16.7 ms 的一帧里，帧内平均加速度只剩 a·t₁/dt ≈ −1200。**这不是精度问题，是采样定理问题。**
+- 正解：`lib/pacing.js` 的 `pacing({tTotal, frames:600, subSteps})` 由**解析总时间**反推
+  `dt = 1.02·tTotal/frames`。修完 600 帧、全部对照项 PASS（含能量守恒）。
+- 连带坑（同一根因，必须一起修，否则"步长对了但时间还是错的"）：
+  `lib/verlet.js` 的 `advanceTo` 用绝对容差 `1e-12 s` 当停止条件，微观尺度下**每帧少走 1 个子步**，
+  时间永远差 12.5%（帧内平均加速度 −8.75e9 vs −1e10）；事件判据 `ev < tTarget` 排除了
+  "事件正好在帧边界"这一支，荧光屏吸收因此失效（屏上偏移偏 0.053%）。两处都已修。
+
+### ② PowerShell 会吃掉 JSON 双引号：给 CLI 传 JSON 要用 Node spawn 或写文件
+
+- 现象：本会话被咬三次——`node node/sim.mjs --params '{"q":1.6e-13,...}'` 在 PowerShell 里
+  引号被剥掉/重排，参数根本没传进去，跑出来还是默认参数（症状：以为模型有 bug）。
+- 正解（二选一）：
+  1. 用 Node 的 `child_process.spawnSync(node, ['node/sim.mjs', '--params', JSON.stringify(p)])`
+     —— 参数是**数组元素**，不过 shell 解析；
+  2. 或把 JSON 写进文件再 `--params @file`（同理，写文件用 `fs.writeFileSync(p, t, 'utf8')`，
+     **别用 `Set-Content -Encoding UTF8`**：Windows PowerShell 会写入 BOM）。
+- 另注：`Select-String` / `-replace` 处理探针脚本时容易静默不匹配（本会话踩过一次：
+  替换没生效却以为生效，白追了 4 轮参数标定）。
+- **同一个坑还有第三种形态（本会话又踩到）**：用 PowerShell 的 `-replace ... | Set-Content -Encoding ascii`
+  改中文源码会把非 ASCII 字符全部写成 `?`（实测把 `node/_assert_probe.cjs` 的中文注释全变成
+  `????`，脚本直接 `SyntaxError`）。改文件一律 `fs.writeFileSync(p, t, 'utf8')` 或编辑器工具，
+  别让 PowerShell 碰编码。
+
+### ③ `pacing` 的兜底断言：`assertResolution()`（本轮新增）
+
+- **现象（同一个根因的另一种触发）**：`pacing()` 只保证 `dt = duration / frames`，保证不了
+  "这个 dt 够不够分辨题目"。谁要是**自己固定一个步长**（例如旧写法的 `dt = 1/60 s`）而题目
+  特征时间是 ns 级，界面照样出帧、数值照样算，但帧里只剩平均量 —— 就是 ① 里那个
+  `-1200 vs -1e10 m/s²`。这类错误**不会自己喊**。
+- **写法**：`assertResolution({ duration, characteristicTime, frames, minFramesPerChar })`，
+  默认要求 `duration / characteristicTime >= 50`。`characteristicTime` 传**引擎内层步长**
+  （`dt / subSteps`，含 `1e-12 s` 浮点地板），于是判据就是"整段至少 50 个内层步"。
+  不满足 → **抛错并打印实际数值**（`duration / characteristicTime / frames / minFramesPerChar`
+  与入参 JSON），绝不返回一个看起来正常的场景。
+- **实测**（`node node/_assert_probe.cjs --bad`，固定 1/60 s + 1 帧）：
+  ```
+  整段时长只覆盖 4.00000 倍特征时间（要求 ≥ 50）；帧数 1 少于一个特征时间里应有的 50 帧
+  实际数值：duration = 0.016666666666666666 s、characteristicTime = 0.004166666666666667 s、
+            frames = 1、minFramesPerChar = 50
+  ```
+- ⚠️ **这个比值与题目参数无关**（正常走 `pacing()` 时恒等于 `frames × subSteps`）：所以
+  "把 h 改成 1e-6 m" 这种极端参数**不会**触发它 —— 会触发的是"步长没跟着解析总时间走"。
+  想验证断言真的会响，就得把步长（或 frames）按旧写法喂进去，别指望极端参数。
+- 本轮迁移：`projectile`（解析滞空时间）、`freefall`（√(2h/g)）；其余 11 个模型保留固定时长
+  的理由见 `references/api-index.md` §2.7。
+
+### ④ 展示层两个坑（本轮修掉）
+
+- **画布上的说明文字别放右上角**：右上角浮着 `#force-panel`（受力小窗，`position:absolute;
+  top:20px; right:22px`），`drawDisplayNote` 原来画在右上角 → 截图里被面板压住 / 裁掉，
+  等于"过小就放大并标注"这条约定失效 ✗。现在改画**左上角**（左下角是力标尺图例、
+  右上角是受力小窗，左上角空着）。
+- **微观题的时间读数换格式**：`t = 0.00 s` 对 4 ns 的题等于没显示（老师会以为时间没在走）。
+  现在 `t < 1e-3 s` 用科学计数法（`t = 2.0×10⁻⁹ s`）；播放倍率另开一栏显示
+  （自适应 = 整段约 6 s 播完，界面写 `自适应 ×1.5×10⁹`），并且**倍率只影响播放**、
+  不乘进 `t`。
+- **标注里的数字必须逐项核对**：上一轮把 `v_y`（20 m/s）写成了 `2.0×10⁷`（那是 `v₀`）。
+  标错数字比不标更糟 —— 写进说明的量必须在 `expect()` 里有对应出处。
+改脚本后**先打印那一行确认**再跑。

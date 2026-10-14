@@ -317,12 +317,14 @@ window.addEventListener('error', function (e) {
       <button id="btn-fp" title="显示 / 隐藏右上角受力小窗">受力图</button>
       <input type="range" id="scrub" min="0" max="100" value="0" step="1">
       <span class="time" id="time-label"></span>
-      <select id="speed" style="width:auto" title="播放速度">
+      <select id="speed" style="width:auto" title="播放速度：自适应 = 整段动画约 6 s 播完（只影响播放快慢，t 仍是真实物理时间）">
+        <option value="auto" selected>自适应（整段约 6 s）</option>
         <option value="0.1">0.1×</option>
         <option value="0.25">0.25×</option>
         <option value="0.5">0.5×</option>
-        <option value="1" selected>1×</option>
+        <option value="1">1×</option>
         <option value="2">2×</option>
+        <option value="4">4×</option>
       </select>
     </div>
 

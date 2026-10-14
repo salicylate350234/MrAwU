@@ -16,7 +16,8 @@
     verify: [],
     index: 0,
     playing: false,
-    speed: 1,
+    speed: 'auto',            // 'auto' = 整段约 6 s 播完的自适应倍率；也可为 0.1 / 0.25 / … / 4
+    speedResolved: 1,         // 上一帧实际用的倍率（仅显示用）
     loop: true,
     velocityScale: 1,
     lastTs: 0,
@@ -45,6 +46,10 @@
   };
 
   var els = {};
+
+  // 自适应播放：整段动画在约 6 s 墙钟内播完（倍率 = 6 s / duration）
+  var ADAPT_TARGET_S = 6;
+  var ADAPT_OPTION_TEXT = '自适应（整段约 6 s）';
 
   function $(id) { return document.getElementById(id); }
 
@@ -140,6 +145,7 @@
       state.error = null;
       var n = state.frames.length - 1;
       state.index = Math.max(0, Math.min(n, Math.round(frac * n)));
+      renderSpeedLabel();                 // 速度下拉里写上实际自适应倍率（换模型/换参数后重算）
       if (!state.selected || !state.scene.bodies.some(function (b) { return b.id === state.selected; })) {
         var first = state.scene.bodies.filter(function (b) { return b.type === 'dynamic'; })[0];
         state.selected = first ? first.id : null;
@@ -397,12 +403,97 @@
     renderTime();
   }
 
+  // 真上标字符：'10^−8' 在界面上看着像断了（截图实测），统一写成 '10⁻⁸'
+  var SUP = { '-': '⁻', '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+              '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
+  function sup(s) {
+    return String(s).split('').map(function (c) { return SUP[c] || c; }).join('');
+  }
+
+  function speedLabel(v, digits) {
+    if (!isFinite(v) || v <= 0) return '—';
+    var d = digits == null ? 2 : digits;
+    var t = Number(v).toPrecision(d + 1);
+    if (!/e/.test(t)) return String(Number(t));          // 100 / 2.5 / 0.1
+    var m = /^(-?[\d.]+)e([+-])(\d+)$/.exec(t);
+    if (!m) return t;
+    return m[1] + '×10' + sup((m[2] === '-' ? '-' : '') + String(Number(m[3])));
+  }
+
+  /**
+   * 时间读数：秒级用定点，ns ~ μs 量级用科学计数法。
+   * ⚠️ 微观题的真实 t 是 4e-9 s 量级，'t = 0.00 s' 会让老师以为时间没在走
+   * （正是"看起来像 bug"的那种观感）——所以要按量级换格式。
+   */
+  function fmtTime(t) {
+    if (!isFinite(t)) return '—';
+    var at = Math.abs(t);
+    if (at === 0) return '0 s';
+    if (at < 1e-3 || at >= 1e5) return speedLabel(t, 2) + ' s';
+    return Number(t).toFixed(at < 10 ? 3 : 2) + ' s';
+  }
+
+  /**
+   * 自适应播放倍率：**让整段动画在约 6 s 墙钟内播完**，即 倍率 = duration / 6。
+   *
+   * 为什么需要：`lib/pacing.js` 把动画时长交给了"解析总时间"，真实电子题（4 ns）于是
+   * 有了 600 帧，但播放器里 1× 的含义是"1 s 墙钟 = 1 s 物理时间"——4 ns 的整段动画在
+   * 1× 下就是"一帧都没看清就结束了"，肉眼看不见（本轮的缺陷 ②）。
+   *
+   * 取值规则：在 {1,1.5,2,2.5,3,4,5,6,8} × 10^n 里挑离 duration/6 最近的那个
+   * （好读的十进制数，而且是 10 的整数次幂量级），于是"自适应 ×1.5×10⁸"这种写法
+   * 老师一眼能换算成"整段几百毫秒"。
+   * ⚠️ 倍率**只影响播放**：`t` 读数、帧数据、对照项全部仍是真实物理量（见 renderTime）。
+   */
+  function adaptiveSpeed(frames) {
+    if (!frames || frames.length < 2) return 1;
+    var dur = frames[frames.length - 1].t - frames[0].t;
+    if (!(dur > 0)) return 1;
+    var want = ADAPT_TARGET_S / dur;
+    if (want <= 1.2) return 1;                           // 秒级题：本来就看得很清楚
+    var mant = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8];
+    var best = 1, bestErr = Infinity;
+    for (var p = -3; p <= 12; p++) {
+      var base = Math.pow(10, p);
+      for (var i = 0; i < mant.length; i++) {
+        var cand = mant[i] * base;
+        var err = Math.abs(Math.log(cand / want));
+        if (err < bestErr) { bestErr = err; best = cand; }
+      }
+    }
+    return best;
+  }
+
+  /** 当前真正生效的倍率：'auto' 用自适应值，否则用手选值 */
+  function effectiveSpeed() {
+    var raw = els.speed ? els.speed.value : state.speed;
+    if (raw === 'auto' || raw == null || raw === '') return adaptiveSpeed(state.frames);
+    var v = Number(raw);
+    return (isFinite(v) && v > 0) ? v : 1;
+  }
+
+  function renderSpeedLabel() {
+    if (!els.speed) return;
+    var o = els.speed.querySelector('option[value="auto"]');
+    if (!o) return;
+    if (!state.frames || state.frames.length < 2) { o.textContent = ADAPT_OPTION_TEXT; return; }
+    o.textContent = ADAPT_OPTION_TEXT + '：×' + speedLabel(adaptiveSpeed(state.frames));
+  }
+
   function renderTime() {
     var n = state.frames.length - 1;
     els.scrub.value = String(state.index);
     els.scrub.max = String(n);
-    els.timeLabel.textContent = 't = ' + fmt(state.frames[Math.round(state.index)].t, 2) + ' s / ' +
-      fmt(state.frames[n].t, 2) + ' s';
+    // ⚠️ 倍率只进"播放倍率"这一栏，t 仍是**真实物理时间**（不许乘倍率）
+    var wall = effectiveSpeed();
+    var suffix = (els.speed && els.speed.value === 'auto')
+      ? ' ｜ 自适应 ×' + speedLabel(wall)
+      : ' ｜ 播放 ' + speedLabel(wall) + '×';
+    els.timeLabel.textContent = 't = ' + fmtTime(state.frames[Math.round(state.index)].t) + ' / ' +
+      fmtTime(state.frames[n].t) + suffix;
+    els.timeLabel.title = '播放倍率只影响播放快慢：t 与帧数据始终是真实物理时间。' +
+      '自适应 = 整段动画在约 ' + ADAPT_TARGET_S + ' s 墙钟内播完（倍率 = ' + ADAPT_TARGET_S +
+      ' s / 时长），本场景实际取 ×' + speedLabel(wall) + '。';
   }
 
   function renderReadout(frame) {
@@ -595,7 +686,8 @@
     state.lastTs = ts;
     if (!state.playing) return;
     var frameDt = state.frames[1] ? state.frames[1].dt : 1 / 60;
-    state.index += (dtWall * state.speed) / frameDt;
+    // 倍率只在这里生效（墙钟 → 帧推进）；state.index 与 t 读数始终是真实帧
+    state.index += (dtWall * effectiveSpeed()) / frameDt;
     var n = state.frames.length - 1;
     if (state.index >= n) {
       if (state.loop) state.index = state.index % n;
@@ -654,7 +746,11 @@
       state.index = Math.max(0, Math.round(state.index) - 1);
       draw();
     });
-    els.speed.addEventListener('change', function () { state.speed = Number(els.speed.value); });
+    els.speed.addEventListener('change', function () {
+      // 'auto' = 自适应倍率（默认选中）；1× / 2× / 4× 仍按原样工作
+      state.speed = els.speed.value === 'auto' ? 'auto' : Number(els.speed.value);
+      if (state.frames) renderTime();
+    });
     els.loop.addEventListener('change', function () { state.loop = els.loop.checked; });
     els.scrub.addEventListener('input', function () {
       setPlaying(false);
@@ -1258,6 +1354,14 @@
     state.modelId = PFA.models.byId[initial] ? initial : (PFA.models.list[0] && PFA.models.list[0].id);
     els.modelSelect.value = state.modelId;
     state.params = PFA.models.defaults(PFA.models.get(state.modelId));
+    // 允许外部（截图脚本 / 老师自定的 HTML）用 window.PFA_PARAMS 覆盖初始参数：
+    // 只认已声明的滑杆键，避免把未知字段塞进 params。
+    var ov = (typeof globalThis !== 'undefined' && globalThis.PFA_PARAMS) || null;
+    if (ov) {
+      Object.keys(ov).forEach(function (k) {
+        if (Object.prototype.hasOwnProperty.call(state.params, k)) state.params[k] = ov[k];
+      });
+    }
 
     bind();
     resize();
