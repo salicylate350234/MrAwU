@@ -18,6 +18,8 @@ const simLib = require(path.join(ROOT, 'lib/sim.js'));
 const verifyLib = require(path.join(ROOT, 'lib/verify.js'));
 const planck = require(path.join(ROOT, 'vendor/planck.min.js'));
 const models = require(path.join(ROOT, 'lib/models/index.js'));
+const trackLib = require(path.join(ROOT, 'lib/track.js'));
+const forcesLib = require(path.join(ROOT, 'lib/forces.js'));
 
 const args = process.argv.slice(2);
 const verbose = args.includes('--verbose');
@@ -187,8 +189,249 @@ Object.keys(CASES).forEach((id) => {
   });
 });
 
+// ================================================================ 组件级单元测试
+// 目标：把"力律"本身的约定钉死，**不依赖任何具体模型**。
+// 每个检查都直接对应 references/force-library.md 里的三条约定：
+//   ① potential 只含额外项（重力不许再记 mgy）  ② 接触法向指向曲率中心且 N<0 必须报错
+//   ③ 力表按 part 记账（分项名必须在引擎 PARTS 里、分项和 = total）
+const F = forcesLib;
+const comp = { cases: 0, checks: 0, fails: 0, list: [] };
+function chk(label, got, want, tol, note) {
+  comp.checks++;
+  const t = tol == null ? 1e-9 : tol;
+  const ok = Math.abs(got - want) <= t;
+  if (!ok) { comp.fails++; comp.list.push(label); }
+  console.log((ok ? 'ok    ' : 'FAIL  ') + '[forces] ' + label +
+    '  期望 ' + want.toPrecision(6) + ' / 实得 ' + (typeof got === 'number' ? got.toPrecision(6) : got) +
+    (note ? '  （' + note + '）' : ''));
+  return ok;
+}
+function ok(label, cond, note) {
+  comp.checks++;
+  if (!cond) { comp.fails++; comp.list.push(label); }
+  console.log((cond ? 'ok    ' : 'FAIL  ') + '[forces] ' + label + (note ? '  （' + note + '）' : ''));
+  return cond;
+}
+const st1 = (x, y, vx, vy) => ({ ball: { x: x, y: y, vx: vx || 0, vy: vy || 0 } });
+const ctxOf = (S) => ({ t: 0, S: S, body: 'ball', lock: null });
+
+comp.cases++;
+// ---- 1. 重力：力分量正确，且 potential **必须是 0**（引擎已含 mgy） ----
+{
+  const g = F.gravity({ body: 'ball', m: 0.4, g: 10 });
+  const f = g.force(ctxOf(st1(3, 7)));
+  chk('重力 F = [0,−mg]（m=0.4,g=10）', f[0], 0);
+  chk('重力 Fy = −mg', f[1], -4, 1e-12);
+  chk('重力 potential ≡ 0（⚠ 引擎 verlet 已自己加 mgy，再返回 mgy 就是记两遍）',
+    g.potential(ctxOf(st1(3, 7))), 0, 1e-12);
+  chk('重力 potential 与位置无关（y=7 与 y=700 都返回 0）',
+    g.potential(ctxOf(st1(3, 700))) - g.potential(ctxOf(st1(3, 7))), 0, 1e-12);
+}
+// ---- 2. 匀强电场：F=qE；potential=−qE·r；数值求导 −∇U 必须等于 F（力/势能成对） ----
+{
+  const q = 2e-3, E = [1.5e3, -400];
+  const e = F.uniformElectric({ body: 'ball', q: q, E: E });
+  const S = st1(0.7, 1.3);
+  const f = e.force(ctxOf(S));
+  chk('电场 Fx = qEx', f[0], q * E[0], 1e-12);
+  chk('电场 Fy = qEy', f[1], q * E[1], 1e-12);
+  const U = (x, y) => e.potential(ctxOf(st1(x, y)));
+  const h = 1e-6;
+  const gx = -(U(0.7 + h, 1.3) - U(0.7 - h, 1.3)) / (2 * h);
+  const gy = -(U(0.7, 1.3 + h) - U(0.7, 1.3 - h)) / (2 * h);
+  chk('电场 −∂U/∂x = qEx（数值求导）', gx, f[0], Math.abs(f[0]) * 1e-6);
+  chk('电场 −∂U/∂y = qEy（数值求导）', gy, f[1], Math.max(1e-9, Math.abs(f[1]) * 1e-6));
+  const pair = F.assertPairing([e], [st1(0.7, 1.3), st1(-2, 0.4)], { tol: 1e-6 });
+  ok('assertPairing：电场力/势能成对（−∇U=F）', pair.ok, '最大相对偏差 ' + pair.rows[0].rel.toExponential(2));
+}
+// ---- 3. 电场分区：区域边界判定（含边界点），并给出分段势能 ----
+{
+  const e = F.uniformElectric({ body: 'ball', q: 1, E: [100, 0],
+    regions: [{ x0: 0, x1: 1, y0: -1, y1: 1 }] });
+  chk('区域内 Fx = qE', e.force(ctxOf(st1(0.5, 0)))[0], 100, 1e-12);
+  chk('区域外 Fx = 0', e.force(ctxOf(st1(1.5, 0)))[0], 0, 1e-12);
+  chk('边界点 x=x1 视为区域**内**（含边界判据）', e.force(ctxOf(st1(1.0, 0)))[0], 100, 1e-12);
+  chk('边界点 y=y0 视为区域内', e.force(ctxOf(st1(0.5, -1)))[0], 100, 1e-12);
+  chk('区域外 potential = 0（跨边界势能可不连续：只在段内守恒）',
+    e.potential(ctxOf(st1(1.5, 0))), 0, 1e-12);
+  chk('区域内 potential = −qE·r', e.potential(ctxOf(st1(0.5, 0))), -100 * 0.5, 1e-12);
+  const pair = F.assertPairing([e], [st1(0.2, 0.3), st1(0.9, -0.4)], { tol: 1e-6 });
+  ok('assertPairing：分区电场在**段内**力/势能成对', pair.ok,
+    '最大相对偏差 ' + pair.rows[0].rel.toExponential(2));
+}
+// ---- 4. 曲线上接触：N = m·v²κ − F_其它·n̂ 的**手算值**（不许用容差蒙混） ----
+{
+  // 直线段路径：从 (0,0) 到 (1,0)，side=+1 ⇒ t̂=(1,0)、n̂=(0,1)（球压在线的上侧）
+  const line = trackLib.makePath({ segments: [{ kind: 'line', a: [0, 0], b: [1, 0], side: 1 }] });
+  const geometry = (ctx) => {
+    const b = ctx.S.ball, s = Math.max(0, Math.min(1, b.x));
+    return { s: s, p: line.pointAt(s), t: line.tangentAt(s), n: line.normalAt(s),
+             k: line.kappaAt(s), mu: line.muAt(s) };
+  };
+  const m = 0.5, g = 10, q = 1e-3, Ex = 200;             // 电场水平，沿切向（无法向分量）
+  const elec = F.uniformElectric({ body: 'ball', q: q, E: [Ex, 0] });
+  const n = F.curveNormal({ body: 'ball', m: m, g: g, geometry: geometry, electric: elec.force });
+  const f0 = n.force(ctxOf(st1(0.5, 0, 0, 0)));
+  chk('直线段 κ=0、静止、无横向外力 ⇒ N = mg（手算 5 N）', Math.hypot(f0[0], f0[1]), m * g, 1e-12);
+  chk('法向方向 = n̂ = (0,1)（直线段由 side 决定）', f0[1], m * g, 1e-12);
+  chk('切向的电场力不进入 N（n̂·Ê=0）', f0[0], 0, 1e-12);
+  // 圆弧段：**取 g=0、q=0** 把"纯净的 N = m·v²κ"钉死（重力/电场的分量会引入浮点残差）。
+  // 圆心 (0.5,0)、R=0.5（κ=2，直线段是 0）；球在面内角 θ₀=atan2(4,3)=53.13° 处，
+  // n̂=(−cosθ₀,−sinθ₀)=−(0.6,0.8)、t̂=(−0.8,0.6)。取 v=3 m/s 纯切向、v_t²=9：
+  //   N = m·v²·κ − F_其它·n̂ = 2·9·2 − 0 = 36 N（手算，精确）
+  const arc = trackLib.makePath({ segments: [{ kind: 'arc', c: [0.5, 0], r: 0.5, a0: 0, a1: Math.PI }] });
+  const th0 = Math.atan2(4, 3);
+  const P0 = arc.pointAt(0.5 * th0);
+  const geomArc = (ctx) => {
+    const b = ctx.S.ball;
+    const s = Math.max(0, Math.min(arc.total, 0.5 * Math.atan2(b.y, b.x - 0.5)));
+    return { s: s, p: arc.pointAt(s), t: arc.tangentAt(s), n: arc.normalAt(s), k: arc.kappaAt(s), mu: 0 };
+  };
+  const na = F.curveNormal({ body: 'ball', m: 2, g: 0, geometry: geomArc, electric: elec.force });
+  // 本段单独用**中性电场**（q=0），免得电场的法向分量混进手算值
+  const naPure = F.curveNormal({ body: 'ball', m: 2, g: 0, geometry: geomArc,
+    electric: F.uniformElectric({ body: 'ball', q: 0, E: [200, 0] }).force });
+  const Sarc = st1(P0[0], P0[1], -0.8 * 3, 0.6 * 3);
+  const fArc = naPure.force(ctxOf(Sarc));
+  chk('圆弧段 N = m·v²·κ（g=0、q=0，手算 36 N，精确）', Math.hypot(fArc[0], fArc[1]), 36, 1e-12);
+  chk('法向力方向 = n̂ = (−0.6,−0.8)（指向曲率中心，内壁）',
+    fArc[0] / Math.hypot(fArc[0], fArc[1]), -0.6, 1e-12);
+  // 同一子步法向力必须与"投影里用的 N"同源（project 用 normalForce 回代，两边不许各算一份）
+  chk('normalForce() 回代值与 force() 的 |F| 一致', naPure.normalForce(ctxOf(Sarc)),
+    Math.hypot(fArc[0], fArc[1]), 1e-12);
+  // 电场的法向分量必须进 N（不能只算 m·v²κ）：n̂·qE = (−0.6)(0.2) ⇒ N = 36 − (−0.12) = 36.12
+  chk('N 里含 F_其它·n̂ 项（n̂·qE = −0.12 N ⇒ N = 36.12）',
+    Math.hypot(na.force(ctxOf(Sarc))[0], na.force(ctxOf(Sarc))[1]), 36.12, 1e-9);
+}
+// ---- 5. N<0 的符号约定：必须**抛错**（默认）或走 onNeg，禁止静默跳过 ----
+{
+  const line = trackLib.makePath({ segments: [{ kind: 'line', a: [0, 0], b: [1, 0], side: 1 }] });
+  const geometry = (ctx) => {
+    const s = Math.max(0, Math.min(1, ctx.S.ball.x));
+    return { s: s, p: line.pointAt(s), t: line.tangentAt(s), n: line.normalAt(s), k: line.kappaAt(s), mu: 0 };
+  };
+  // 直线段上 N = −F_其它·n̂ = mg − qEy：取 qEy > mg ⇒ N<0（球被电场往上推离轨道）
+  const elec = F.uniformElectric({ body: 'ball', q: 1, E: [0, 20] });
+  const n = F.curveNormal({ body: 'ball', m: 0.5, g: 10, geometry: geometry, electric: elec.force });
+  let threw = null;
+  try { n.force(ctxOf(st1(0.5, 0, 0, 0))); } catch (e) { threw = e; }
+  ok('N<0 且没有 onNeg ⇒ 抛错（默认行为，专治"静默跳过"）', !!threw,
+    threw ? threw.message.slice(0, 46) + '…' : '竟然没抛错');
+  let got = null;
+  const n2 = F.curveNormal({ body: 'ball', m: 0.5, g: 10, geometry: geometry, electric: elec.force,
+    onNeg: (info) => { got = info; return [0, 0]; } });
+  const f2 = n2.force(ctxOf(st1(0.5, 0, 0, 0)));
+  ok('给了 onNeg ⇒ 不抛错、返回 0 力，并把诊断交出来', f2[0] === 0 && f2[1] === 0 && !!got,
+    got ? 'N=' + got.N.toFixed(4) + ' N, s=' + got.s.toFixed(4) + ' m' : '');
+  chk('onNeg 收到的 N 与解析式一致（m=0.5,g=10,qEy=20 ⇒ N=5−20=−15）', got ? got.N : NaN, -15, 1e-12);
+}
+// ---- 6. 摩擦：动摩擦方向 + 静摩擦"咬住"判据（belt 缺的那条分支） ----
+{
+  const line = trackLib.makePath({ segments: [{ kind: 'line', a: [0, 0], b: [1, 0], side: 1, mu: 0.5 }] });
+  const geometry = (ctx) => {
+    const s = Math.max(0, Math.min(1, ctx.S.ball.x));
+    return { s: s, p: line.pointAt(s), t: line.tangentAt(s), n: line.normalAt(s), k: 0, mu: 0.5 };
+  };
+  const m = 1, g = 10, mu = 0.5;
+  const elec = F.uniformElectric({ body: 'ball', q: 1, E: [0, 0] });
+  const normal = F.curveNormal({ body: 'ball', m: m, g: g, geometry: geometry, electric: elec.force });
+  const fr = F.kineticFriction({ body: 'ball', m: m, g: g, mu: mu, geometry: geometry,
+    electric: elec.force, surfaceNormal: (ctx) => normal.normalForce(ctx) });
+  const fSlide = fr.force(ctxOf(st1(0.5, 0, 1, 0)));
+  chk('动摩擦大小 = μN = 0.5·10 = 5 N', Math.hypot(fSlide[0], fSlide[1]), mu * m * g, 1e-9);
+  chk('动摩擦方向与 v 相反（v 沿 +x ⇒ f 沿 −x）', fSlide[0], -mu * m * g, 1e-9);
+  const s0 = fr.state(ctxOf(st1(0.5, 0, 0, 0)));
+  ok('近静止且 F_t=0 ≤ μN ⇒ 静摩擦咬住（stick）', s0.stick === true && s0.f === 0);
+  // 静摩擦咬住的第二种情形：v0 = 带速（相对速度 0）但外力 |F_t| ≤ μN ⇒ 必须咬住而不是乱给 μN
+  const elecPush = F.uniformElectric({ body: 'ball', q: 1, E: [3, 0] });   // F_t = −3 N，|F_t| < 5 N
+  const fr2 = F.kineticFriction({ body: 'ball', m: m, g: g, mu: mu, geometry: geometry,
+    electric: elecPush.force, surfaceNormal: (ctx) => normal.normalForce(ctx) });
+  const s1x = fr2.state(ctxOf(st1(0.5, 0, 0, 0)));
+  ok('v=0（与带共速）且 |F_t|=3 N ≤ μN=5 N ⇒ 咬住，f = −F_t = +3 N',
+    s1x.stick === true && Math.abs(Math.abs(s1x.f) - 3) < 1e-9,
+    'f=' + s1x.f.toFixed(4) + ' N, stick=' + s1x.stick);
+  const elecBig = F.uniformElectric({ body: 'ball', q: 1, E: [8, 0] });    // F_t = −8 N > μN
+  const fr3 = F.kineticFriction({ body: 'ball', m: m, g: g, mu: mu, geometry: geometry,
+    electric: elecBig.force, surfaceNormal: (ctx) => normal.normalForce(ctx) });
+  const s2x = fr3.state(ctxOf(st1(0.5, 0, 0, 0)));
+  ok('|F_t|=8 N > μN=5 N ⇒ 不咬住，转为动摩擦 |f| = μN = 5 N',
+    s2x.stick === false && Math.abs(Math.abs(s2x.f) - 5) < 1e-9, 'f=' + s2x.f.toFixed(4) + ' N');
+  const st = F.staticFriction({ body: 'ball', m: m, g: g, mu: mu, geometry: geometry,
+    electric: elecPush.force, surfaceNormal: (ctx) => normal.normalForce(ctx) });
+  const fs = st.force(ctxOf(st1(0.5, 0, 0, 0)));
+  // 注意 n̂=(0,1) ⇒ t̂=(−1,0)，所以"大小 3 N、方向与电场力相反"在 x 分量上表现为 −3
+  ok('staticFriction 组件在咬住时给出 |f| = |F_t| = 3 N（t̂=−x ⇒ fx=−3）',
+    Math.abs(fs[0]) === 3 && Math.abs(fs[1]) < 1e-12, 'f=(' + fs[0] + ',' + fs[1] + ') N');
+}
+// ---- 7. 弹簧 / 阻力：力与势能成对 ----
+{
+  const sp = F.spring({ body: 'ball', k: 40, anchor: [0, 0], rest: 0.5 });
+  const S = st1(1.0, 0, 0, 0);
+  const f = sp.force(ctxOf(S));
+  chk('弹簧 F = −k(L−rest)·r̂（L=1, k=40, rest=0.5 ⇒ −20 N）', f[0], -20, 1e-9);
+  chk('弹簧势能 ½k(L−rest)²（=5 J）', sp.potential(ctxOf(S)), 5, 1e-12);
+  const pr = F.assertPairing([sp], [st1(1.0, 0.3), st1(-0.4, 0.9)], { tol: 1e-5 });
+  ok('assertPairing：弹簧力/势能成对', pr.ok, '最大相对偏差 ' + pr.rows[0].rel.toExponential(2));
+  const d = F.drag({ body: 'ball', c: 2 });
+  const fd = d.force(ctxOf(st1(0, 0, 3, -1)));
+  chk('阻力 F = −c·v（c=2, v=(3,−1) ⇒ (−6,2)）', fd[0] * 100 + fd[1], -598, 1e-9);
+  chk('阻力不产生势能（耗散力）', d.potential(ctxOf(st1(0, 0, 3, -1))), 0, 1e-12);
+}
+// ---- 8. 分项名与力表记账（force 的返回值必须落在 verlet.PARTS 里） ----
+{
+  const okParts = F.PARTS.join(',');
+  ok('组件库 PARTS 与引擎 verlet.PARTS 一致', okParts === require(path.join(ROOT, 'lib/verlet.js')).PARTS.join(','),
+    okParts);
+  let bombed = null;
+  try { F.composeForces([{ id: 'x', part: 'magnet', force: () => [1, 0], potential: () => 0 }]); }
+  catch (e) { bombed = e; }
+  ok('未知分项名必须在组合时就报错（否则力表看得见、引擎 accelOf 却丢掉）', !!bombed);
+  let bombed2 = null;
+  try { F.composeForces([{ id: 'y', part: 'gravity', force: () => [1, 0] }]); }
+  catch (e) { bombed2 = e; }
+  ok('组件缺 potential 必须在组合时就报错（力/势能强制成对）', !!bombed2);
+  const gr = F.gravity({ body: 'ball', m: 1, g: 10 });
+  const el = F.uniformElectric({ body: 'ball', q: 0.1, E: [100, 0] });
+  const c = F.composeForces([gr, el]);
+  const det = c.forceDetail(0, st1(0, 0))['ball'];
+  ok('力表分项和 = total（力表按 part 记账）', F.auditForceTable(det, st1(0, 0)).length === 0,
+    'ΣF=' + JSON.stringify(det.total) + ' parts=' + JSON.stringify(det.parts));
+  chk('组合后 potential = 额外势能之和（重力 0 + 电场 −qEx）',
+    c.potential(0, st1(2, 0)), 0 + (-0.1 * 100 * 2), 1e-12);
+}
+// ---- 9. 能量审计：独立于模型 analytics（对 trackSlopeLoopE 的帧数据直接算 KE+mgy−qEx） ----
+{
+  const model = models.get('trackSlopeLoopE');
+  const params = models.defaults(model);
+  const scene = models.scene('trackSlopeLoopE', params, sceneLib);
+  const frames = simLib.createSim(planck, scene).record().frames;
+  const m = params.mass, q = params.q * 1e-3, Ex = scene.laws.components.electric.E[0];
+  const audit = F.energyAudit(frames, {
+    body: 'ball', g: params.g,
+    // 独立势能：只写电场势能 −qE·x；重力势能由审计自己用 mgy 加（与引擎 stats.potential 同口径）
+    potential: (S) => -q * Ex * S.ball.x
+  });
+  // 手算（帧 0）：½mv₀² + mgy₀ − qE·x₀ —— 起点 A 与 B 等高、(1) 的平衡关系 qE·x_A = mgy_A
+  // ⇒ KE₀ + mgy_A − qE·x_A = KE₀ = 2.45 J（这正是"势能不该记两遍"的数值体现）
+  const hand = 0.5 * m * params.v0 * params.v0;
+  chk('energyAudit 的初能量 = KE₀ + mgy₀ − qEx₀（手算 2.45 J，含平衡场强 mgy_A=qE·x_A）',
+    audit.E0, hand, 1e-9, 'qE·x_A=' + (q * Ex * 2.3868699395908446).toPrecision(6) +
+    ' J 与 mg·y_A=' + (m * params.g * 1.7986355100472926).toPrecision(6) + ' J 相等');
+  chk('energyAudit 与引擎 stats.mechanical 相互独立且一致（初值 5.000000 J）',
+    audit.E0 - frames[0].stats.mechanical, 0, 1e-9);
+  ok('energyAudit 报出的漂移量级与引擎 mechanical 一致（|ΔE| < 1e−4 J）',
+    Math.abs(audit.dE_last) < 1e-4, 'dE_last=' + audit.dE_last.toExponential(3) +
+    ' J，相对 ' + (audit.rel_worst * 100).toExponential(3) + '%');
+}
 console.log('');
-console.log('用例 ' + cases + ' 个，检查项 ' + checks + ' 项，失败 ' + failures + ' 项');
+console.log('[forces] 单元测试：' + comp.checks + ' 项检查，失败 ' + comp.fails + ' 项');
+comp.list.forEach(f => console.log('  - ' + f));
+failures += comp.fails;
+cases += comp.cases;
+
+console.log('');
+console.log('用例 ' + cases + ' 个，检查项 ' + (checks + comp.checks) + ' 项（模型 ' + checks +
+  ' + 力组件 ' + comp.checks + '），失败 ' + failures + ' 项');
 if (failures) {
   console.log('失败用例：');
   failuresList.forEach(f => console.log('  - ' + f));
