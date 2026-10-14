@@ -30,6 +30,12 @@ const only = (() => {
 
 const CASES = {
   // 电磁学组：匀强电场（加速 / 偏转）
+  // 半圆槽 + A 处固定点电荷（本题）：默认 κ≈2.4；再给两组"改 q / 改 R"的参数验证解析式随参数走
+  semicircleCoulomb: [
+    {},
+    { q: 2.0 },                       // 减小 q ⇒ κ 变小 ⇒ M 更靠近 A
+    { R: 0.8, mass: 0.8 }             // 换尺度
+  ],
   efieldAccel: [
     {},
     { v0: 1 },                          // 有初速度
@@ -429,10 +435,143 @@ comp.list.forEach(f => console.log('  - ' + f));
 failures += comp.fails;
 cases += comp.cases;
 
+// ---- 10. 库仑力组件：−∇U=F、斥力/引力符号、1/r² 标度、多电荷叠加、r→0 抛错、分项名 ----
+{
+  const K = 8.9875517923e9;
+  const KAPPA_U = 8.9875517923e9;
+  const kk = KAPPA_U;
+  // ① 单电荷斥力数值
+  const q = 2e-6, Q = 3e-6;
+  const c1 = F.coulomb({ body: 'ball', q: q, charges: [{ x: 0, y: 0, Q: Q }] });
+  const S = st1(0.3, 0.4);                       // r = 0.5
+  const f = c1.force(ctxOf(S));
+  chk('库仑斥力 |F| = kQq/r²（r=0.5, q=2μC, Q=3μC ⇒ 0.2157 N）',
+    Math.hypot(f[0], f[1]), kk * q * Q / 0.25, 1e-12);
+  chk('库仑斥力方向沿 r̂ = (0.6,0.8)（正电荷 ⇒ 斥力，背离点电荷）', f[0] / Math.hypot(f[0], f[1]), 0.6, 1e-12);
+  chk('库仑势能 U = kQq/r（0.1079 J）', c1.potential(ctxOf(S)), kk * q * Q / 0.5, 1e-12);
+  // ② 引力（Q<0）：符号反转、大小相同
+  const c2 = F.coulomb({ body: 'ball', q: q, charges: [{ x: 0, y: 0, Q: -Q }] });
+  const f2 = c2.force(ctxOf(S));
+  chk('Q<0 ⇒ 引力，方向与斥力相反', f2[0] + f[0], 0, 1e-12);
+  chk('Q<0 ⇒ 势能变负（吸引）', c2.potential(ctxOf(S)), -kk * q * Q / 0.5, 1e-12);
+  // ③ 1/r² 标度：r 加倍 ⇒ 力降到 1/4
+  const S2 = st1(0.6, 0.8);
+  chk('1/r² 标度：r 加倍 ⇒ |F| → 1/4', Math.hypot.apply(null, c1.force(ctxOf(S2))),
+    Math.hypot(f[0], f[1]) / 4, 1e-15);
+  // ④ 多电荷叠加（线性）
+  const c3 = F.coulomb({ body: 'ball', q: q, charges: [{ x: 0, y: 0, Q: Q }, { x: 1, y: 0, Q: -Q }] });
+  const fA = c1.force(ctxOf(S));
+  const c4 = F.coulomb({ body: 'ball', q: q, charges: [{ x: 1, y: 0, Q: -Q }] });
+  const fB = c4.force(ctxOf(S));
+  const f3 = c3.force(ctxOf(S));
+  chk('多电荷叠加：F = ΣFᵢ（x 分量）', f3[0], fA[0] + fB[0], 1e-12);
+  chk('多电荷叠加：U = ΣUᵢ', c3.potential(ctxOf(S)),
+    c1.potential(ctxOf(S)) + c4.potential(ctxOf(S)), 1e-12);
+  // ⑤ r→0：必须抛错并打印状态（不许静默 NaN/Infinity）
+  let threw = null;
+  try { c1.force(ctxOf(st1(0, 0))); } catch (e) { threw = e; }
+  ok('r→0（球与点电荷重合）必须抛错并打印状态，禁止静默 NaN/Infinity', !!threw,
+    threw ? threw.message.slice(0, 58) + '…' : '竟然没抛错');
+  let threwP = null;
+  try { c1.potential(ctxOf(st1(1e-12, 0))); } catch (e) { threwP = e; }
+  ok('potential 在 r≤rMin 时同样抛错（力/势能同一判据）', !!threwP);
+  let threwEmpty = null;
+  try { F.coulomb({ body: 'ball', q: q, charges: [] }); } catch (e) { threwEmpty = e; }
+  ok('charges 为空 ⇒ 组合时直接抛错（不静默返回 0 力）', !!threwEmpty);
+  // ⑥ 分项名与力表记账：库仑力记在 electric，且 Σ分项 = total
+  ok('coulomb 的分项名 = electric（库仑力记在 electric 分项）', c1.part === 'electric', c1.part);
+  const comp2 = F.composeForces([F.gravity({ body: 'ball', m: 0.5, g: 10 }), c1]);
+  const det = comp2.forceDetail(0, st1(0.3, 0.4))['ball'];
+  ok('力表分项 = gravity + electric（Σ分项 = total）',
+    F.auditForceTable(det, st1(0.3, 0.4)).length === 0,
+    'parts=' + Object.keys(det.parts).join('+') + ' total=' + JSON.stringify(det.total));
+  chk('组合后 potential 只含库仑项（重力组件恒返回 0）',
+    comp2.potential(0, st1(0.3, 0.4)), kk * q * Q / 0.5, 1e-12);
+  // ⑦ −∇U = F（中心差分，独立于解析求导）
+  const pair = F.assertPairing([c1], [st1(0.3, 0.4), st1(-0.7, 0.25), st1(0.05, -0.9)], { tol: 1e-6 });
+  ok('assertPairing：库仑力/势能成对（−∇U = F，中心差分）', pair.ok,
+    '最大相对偏差 ' + pair.rows[0].rel.toExponential(2));
+}
+// ---- 11. semicircleCoulomb：四项判定的数值证据（D 组） ----
+{
+  const model = models.get('semicircleCoulomb');
+  const params = models.defaults(model);
+  const scene = models.scene('semicircleCoulomb', params, sceneLib);
+  const frames = simLib.createSim(planck, scene).record().frames;
+  const A = model.build._analytics(params);
+  const R = params.R, m = params.mass * 1e-3, g = params.g, kqQ = A.kqQ;
+  const ball = frames.map(f => f.bodies.ball);
+  const speed = ball.map(b => Math.hypot(b.vx, b.vy));
+  const dt = frames[1].t - frames[0].t;
+  // (1) 速度最大点在 P 之前：t_N < t_P
+  let iN = 0; speed.forEach((v, i) => { if (v > speed[iN]) iN = i; });
+  const tN = frames[iN].t, tP = A.tP;
+  ok('【A 反证】速度最大帧 t_N < 到达 P 的时刻 t_P', tN < tP,
+    't_N=' + tN.toFixed(5) + ' s（θ_N=' + (A.thN * 180 / Math.PI).toFixed(2) + '°）、t_P=' +
+    tP.toFixed(5) + ' s（θ_P=−90°）⇒ 速度最大点不在 M–P 之间');
+  ok('N 落在 B 与 P 之间（θ_N > −90°）', A.thN > -Math.PI / 2,
+    'θ_N=' + (A.thN * 180 / Math.PI).toFixed(4) + '°');
+  // (2) B→M 沿弧 40+ 采样：|F合| 单调不减
+  const Fnet = (th) => {
+    const rx = R * Math.cos(th) + R, ry = R * Math.sin(th), r = Math.hypot(rx, ry);
+    return [kqQ * rx / (r * r * r), kqQ * ry / (r * r * r) - m * g];
+  };
+  const NPT = 40, mags = [], Uels = [];
+  for (let i = 0; i <= NPT; i++) {
+    const th = -1e-9 + (A.thM + 1e-9) * i / NPT;
+    mags.push(Math.hypot.apply(null, Fnet(th)));
+    Uels.push(kqQ / A.rOf(th));
+  }
+  let viol = 0, minF = Infinity, minAt = 0;
+  for (let i = 0; i < mags.length; i++) {
+    if (mags[i] < minF) { minF = mags[i]; minAt = -1e-9 + (A.thM + 1e-9) * i / NPT; }
+    if (i && mags[i] < mags[i - 1] - 1e-12) viol++;
+  }
+  ok('【B 反证】B→M 沿弧 ' + (NPT + 1) + ' 点 |F合| 单调不减（顺序违例 0）', viol === 0,
+    '|F合| min=' + minF.toFixed(6) + ' N @θ=' + (minAt * 180 / Math.PI).toFixed(2) + '°、max=' +
+    mags[mags.length - 1].toFixed(6) + ' N、违例 ' + viol + ' 次');
+  // (3) B→M 电势能单调增
+  let violU = 0;
+  for (let i = 1; i < Uels.length; i++) if (Uels[i] < Uels[i - 1] - 1e-15) violU++;
+  ok('【C 证据】B→M 电势能 kQq/r 单调增', violU === 0,
+    'U 起 ' + Uels[0].toExponential(6) + ' J → 止 ' + Uels[Uels.length - 1].toExponential(6) +
+    ' J（违例 ' + violU + ' 次）');
+  // (4) P→M：|ΔEk| > ΔEp(电)
+  const EkP = 0.5 * m * A.vP * A.vP;
+  const dEp = kqQ / A.rOf(A.thM) - kqQ / A.rOf(-Math.PI / 2);
+  ok('【D 证据】P→M 动能减少量 |ΔEk| > 电势能增加量 ΔEp(电)', EkP > dEp,
+    '|ΔEk|=' + EkP.toExponential(6) + ' J > ΔEp(电)=' + dEp.toExponential(6) + ' J（差 ' +
+    (EkP - dEp).toExponential(6) + ' J = 重力势能增加量 ' +
+    (m * g * (R * Math.sin(A.thM) + R)).toExponential(6) + ' J）');
+  // (5) 左半侧（P→M）切向加速度恒为负
+  let maxAt = -Infinity;
+  for (let i = 0; i <= 200; i++) {
+    const th = -Math.PI / 2 + (A.thM + Math.PI / 2) * i / 200;
+    maxAt = Math.max(maxAt, A.aOf(th));
+  }
+  ok('【A 直接证据】P→M 段切向加速度全部 < 0（200 点采样）', maxAt < 0,
+    'max a_t = ' + maxAt.toExponential(4) + ' m/s² < 0');
+  // (6) 停点在 A–P 之间（题设几何）+ 全程不脱离
+  ok('停点 M 落在 A 与 P 之间的弧上（θ_M < −90°）', A.thM < -Math.PI / 2,
+    'θ_M=' + (A.thM * 180 / Math.PI).toFixed(4) + '°、r_M=' + A.rOf(A.thM).toFixed(5) +
+    ' m < r_P=' + A.rOf(-Math.PI / 2).toFixed(5) + ' m');
+  let Nmin = Infinity;
+  for (let i = 0; i <= 400; i++) {
+    const th = -1e-9 + (A.thM + 1e-9) * i / 400;
+    const vv = A.vOf(th);
+    const Fn = Fnet(th);
+    Nmin = Math.min(Nmin, m * vv * vv / R - (Fn[0] * -Math.cos(th) + Fn[1] * -Math.sin(th)));
+  }
+  ok('全程法向力 N > 0（库仑力与重力都压向槽内壁，不脱离）', Nmin > 0,
+    'N_min=' + Nmin.toExponential(4) + ' N');
+  comp.cases += 0;
+  cases += 0;
+  checks += 0;
+}
+
 console.log('');
 console.log('用例 ' + cases + ' 个，检查项 ' + (checks + comp.checks) + ' 项（模型 ' + checks +
-  ' + 力组件 ' + comp.checks + '），失败 ' + failures + ' 项');
-if (failures) {
+  ' + 力组件 ' + comp.checks + '），失败 ' + failures + ' 项');if (failures) {
   console.log('失败用例：');
   failuresList.forEach(f => console.log('  - ' + f));
 }

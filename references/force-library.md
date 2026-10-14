@@ -11,6 +11,7 @@
 |---|---|---|---|
 | `gravity({body,m,g})` | `[0,−mg]` | **恒为 0** | 引擎已自己加 mgy，见约定 ① |
 | `uniformElectric({body,q,E,regions})` | `qE`（区域外 0） | `−q(E·r)`（区域外 0） | regions 空=全场；含边界 |
+| `coulomb({body,q,charges,k,rMin})` | `Σ k·q·Qᵢ·rᵢ/\|rᵢ\|³` | `Σ k·q·Qᵢ/\|rᵢ\|` | 固定点电荷系；`charges=[{x,y,Q}]`（Q 自带符号，也接受 field.js 的 `q` 键）；r→0 **抛错并打印状态**，不钳制不静默 |
 | `curveNormal({body,m,g,geometry,electric})` | `N·n̂` | 0 | `N=m·v_t²κ−F_其它·n̂`；见约定 ② |
 | `kineticFriction({body,mu,geometry,electric,surfaceNormal})` | `f·t̂`（含静摩擦咬住） | 0 | 判据：近静止且 `|F_t|≤μN` ⇒ `f=−F_t` |
 | `staticFriction(...)` | 同上，只留咬住分支 | 0 | 与动摩擦**同一处判据** |
