@@ -21,7 +21,7 @@
 换版本时直接替换本文件，然后跑：
 
 ```bash
-node node/compare-engines.cjs   # 应保持 25/25 通过
+node node/compare-engines.cjs   # 应保持 26/26 通过
 ```
 
 许可证头保留在文件开头（`@license The MIT license`），不要删除。
