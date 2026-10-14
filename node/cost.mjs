@@ -214,8 +214,16 @@ function textOf(content) {
 
 /* ---------------- 汇总 ---------------- */
 
+const SESSION_FILE = 'session.v4.jsonl.zstd';
+
 function findSessions(dir, skip) {
   if (!fs.existsSync(dir)) return { dir, error: 'sessions 目录不存在', sessions: [] };
+  // ② 单个会话目录：<dir>/session.v4.jsonl.zstd 直接存在 ⇒ 只统计这一个会话
+  const direct = path.join(dir, SESSION_FILE);
+  if (fs.existsSync(direct) && fs.statSync(direct).isFile()) {
+    const sessionId = path.basename(path.resolve(dir));
+    return { dir, error: null, sessions: sessionId === skip ? [] : [{ sessionId, file: direct }] };
+  }
   const out = [];
   for (const name of fs.readdirSync(dir)) {
     const f = path.join(dir, name, 'session.v4.jsonl.zstd');

@@ -193,3 +193,65 @@ assertResolution({ duration: pace.duration, characteristicTime: pace.dt / pace.s
 | `node node/tests.mjs [--only a,b] [--verbose]` | 全库回归（全绿才算过） |
 | `node node/build.mjs --title "题名" --models <id,id> --out "dist/题名.html" [--engine verlet\|planck]` | 打包单文件 HTML（`--models` 是硬规则） |
 | `node node/qa.mjs --model <id> --times 0.2,1.2,2.4` | 出 PNG 帧供目视自检 |
+
+## 8. 配方：新增一个力组件（放 `lib/forces.js` → 导出表 `forces.js:660`）
+
+> **先读这三份文档再动手**：本页 + `references/force-library.md` + `references/pitfalls.md`（合计 ≤500 行）。
+> **禁止通读大文件**：`lib/forces.js` 671 行、`verlet.js` 305 行 —— 用 `grep` 定位后只读那 20–40 行 ✗。
+
+组件契约：`makeXxx({ body, ...参数 })` 返回纯数据对象。
+
+| 成员 | 约定 |
+|---|---|
+| 身份 | `{ id, part, body }`；`part` 必须是 §3 的八个分项之一（写错 ⇒ 帧里凭空消失） |
+| `force(ctx)` | 返回 `[fx,fy]`；**纯函数**：只读 `ctx.t/ctx.S/ctx.lock`，**绝不许写回状态**（同一子步调 2 次 ⚠️ §2 致命约定 1） |
+| `potential(ctx)` | 返回 number；**必须与 `force` 成对**：同一个 `U` 求负梯度要等于 `force`（`−∇U=F`） |
+| 失败 | **抛错并打印状态**（`t`、球/电荷坐标、可疑量），不钳零、不返回 0、不吞异常 ⚠️ §3 |
+
+```js
+function makeThing(o) {                    // 最小骨架（照抄 coulomb/spring 的形状）
+  var id = need(o.body, 'thing.body');     // need() 做非空校验并打印字段名
+  if (!(o.k > 0)) throw new Error('forces: thing.k 必须为正（实得 ' + o.k + '）');
+  return {
+    id: o.id || ('thing:' + id), part: o.part || 'applied', body: id, k: o.k,
+    force: function (ctx) { /* 只读 ctx；非有限值 ⇒ throw + 状态快照 */ return [fx, fy]; },
+    potential: function (ctx) { /* 与 force 同一套判据/几何 */ return u; },
+  };
+}
+```
+
+必须补的组件测试（清单，写进 `node/tests.mjs` 对应段）：
+
+1. `−∇U=F` **数值验证**：中央差分取 3 个点，相对误差 < 1e-6（配对的唯一证据）；
+2. 力/势能**同一重合判据**（如 `rMin`）：两处都要抛，不许一处钳一处不钳；
+3. 出错分支**真的抛**（`try{...}catch(e)` 断言 message 含状态快照：`tests.mjs:479` 的 `coulomb` 空 `charges` 例）；
+4. `part` 名落进 §3 的八项（`c1.part === 'electric'`，`tests.mjs:482`）；
+5. `verletOnly` 只在 planck 侧无等价力时才加（§1），有等价实现就别加。
+
+**示例（现成的点电荷库仑力 `coulomb`，`lib/forces.js`）**：工厂在 `forces.js:144-210`；
+返回 `{ id, part:'electric', body, k, q, charges, rMin }`（`:180`）+ 成对 `force`（`:184`）；
+`sep()`（`:166`）把"重合/过近"判据同时喂给 `force` 与 `potential`，力 `kqQ/r³`（`:190`）、势 `kqQ/r`（`:204`）非有限即抛；
+导出表登记在 `forces.js:660`，G 组数值证据见 `node/tests.mjs:445-482`。
+
+## 9. 配方：新增一个轨道/受力模型
+
+> **先读这三份文档再动手**：本页 + `references/model-contract.md` + `references/pitfalls.md`。**禁止通读 >200 行源文件** ✗。
+
+最小步骤（新建 `lib/models/<域>.js`，导出 §1 的模型契约对象）：
+
+1. 取模块：`tools.track.makePath`、`tools.forces.composeForces / curveNormal`、`tools.pacing.pacing / assertResolution`。
+2. `build(p)`：先算解析量（半径/速度/临界角），再用 `makePath` 出几何（`{ kind:'track'|'edge', points|arc }`）；
+   时长交给 `pacing({ tTotal: 解析总时间, frames: 600, subSteps: 8 })`（§2.5），微观尺度再 `assertResolution`（§2.6）。
+3. `laws.force`：用 `curveNormal(path, s)` 取切/法向，力表按 `composeForces([...])` 的**分项**相加（§3），
+   `force` 保持纯函数；要改状态放 `project`/`onEvent` 并**返回分类**（§2 致命约定 2）。
+4. `expect(p, ctx)`：写 `probe`（§5）。`reduce` 默认**平均**、冲量用 `'sum'`、峰值用 `'maxAbs'`；
+   `absTolerance` 必须写在**对照项**上（写进 `probe` 是死代码 ✗）。
+5. 注册 `lib/models/index.js` 的 `add({...})`；**同时**把文件名加进 `node/build.mjs` 的 `MODEL_FILES`
+   （只加 `index.js` ⇒ 打包出的 HTML 里没有这个模型）；只读名单再同步 `node/tests.mjs`（可选）。
+6. `verletOnly: true`：**仅当 planck 侧根本没有这种力**（相互万有引力、点电荷场、纯场模型，§1 已列）；有等价实现就别加 ✗。
+7. ⚠️ **场景新增任何字段必须同时登记进 `lib/scene.js` 的 `normalize()` 白名单**（§4），否则被静默丢弃。
+
+**示例（现成的 `semicircleCoulomb`，`lib/models/electric.js`）**：`build` 在 `electric.js:689`（配解析
+`semicircleAnalytics` `:596` 与探针 `_items` `:878`）；库仑力直接复用组件 `forceLib.coulomb`（`:747`）——
+`coulomb` 分项 = `electric`、`normal`/`path` 各自另一个分项，**别把同一份力记两次**（§2 约定 1）；
+`expect` 只做 `_items(analytics(p))`（`:869`，数值对照的写法）；注册在 `electric.js:943-951`。
