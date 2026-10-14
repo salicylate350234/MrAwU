@@ -71,7 +71,7 @@ node node/build.mjs --title "板块模型·拉木板（题图15）" --models pla
 
 ## 命令速查
 
-```powershell
+```pwsh
 & $NODE node\quick.mjs --model incline                 # 单模型秒级快问快答（默认 ≤12 行，--brief ≤5 行）
 & $NODE node\quick.mjs --model plankPush --params '{"force":20}'
 & $NODE node\sim.mjs  --model incline --params '{...}'  # 完整受力表 + 解析对照表

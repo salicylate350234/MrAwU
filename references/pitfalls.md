@@ -130,3 +130,14 @@
 - **标注里的数字必须逐项核对**：上一轮把 `v_y`（20 m/s）写成了 `2.0×10⁷`（那是 `v₀`）。
   标错数字比不标更糟 —— 写进说明的量必须在 `expect()` 里有对应出处。
 改脚本后**先打印那一行确认**再跑。
+
+### ⑤ 本机 shell 现状：DSH 工具调用可能落在 Windows PowerShell 5.1（务必知道）
+
+- 自检事实：本机 `pwsh` 曾**不在 PATH** 上，于是 DSH 的 `pwsh -Command` 回退到 **Windows PowerShell 5.1**（`PSEdition: Desktop`）✗。
+  5.1 的两大坑：**原生命令参数里的双引号会被吃掉**（传 JSON 必炸）、**`Set-Content -Encoding UTF8` 会写 BOM**（EF BB BF）。
+- 对策（按可靠性排序）：
+  1. 给原生命令传 JSON 等复杂参数：**用 Node `spawnSync` 自己控制 argv**，或写进文件；不要指望 shell 转义。
+  2. 写文本文件：用 Node 的 `fs.writeFileSync(p, t, 'utf8')`，或指定绝对路径的 pwsh：
+     `& "C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -Command ...`（PS 7 的 `Set-Content -Encoding utf8` 不写 BOM）。
+  3. 让 harness 直接用 pwsh：把 `C:\Program Files\PowerShell\7` 加入 PATH 并**重启 DSH**（PATH 变更不会影响已运行的进程）。
+- 自检命令：`node node/shell-check.mjs`（会报告 pwsh 是否可用、脚本里是否还有 `powershell` 调用）。

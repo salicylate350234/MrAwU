@@ -41,7 +41,7 @@ C:\Users\<你的用户名>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\no
 |---|---|---|
 | `@napi-rs/canvas` | 导出 GIF、生成 Node 端预览 PNG（`node/qa.mjs` 目视自检） | 见下 |
 
-```powershell
+```pwsh
 cd <skill 目录>
 npm i @napi-rs/canvas --cache "<skill 目录>\.npm-cache"
 ```
@@ -51,7 +51,7 @@ npm i @napi-rs/canvas --cache "<skill 目录>\.npm-cache"
 
 ## 三、装完就自检（一条命令）
 
-```powershell
+```pwsh
 cd <skill 目录>
 & "<node 路径>" node\check-env.mjs
 ```

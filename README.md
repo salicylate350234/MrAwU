@@ -151,7 +151,7 @@ npx mrawu --build --models incline   # 从源码只打包某个模型
 
 需要 Node.js（本机上已有，路径见下）。**主流程不需要 npm install**。
 
-```powershell
+```pwsh
 # 假设 NODE 是 node 可执行文件路径
 $NODE = "<DSH 自带 node>\node.exe   （本机示例：C:\Users\<你的用户名>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe）"
 cd <本目录>
@@ -187,7 +187,7 @@ cd <本目录>
 观察量相对 `--target` 的符号变化，再在变化区间内二分到 `--tol`；找到后还会用同一个参数
 再跑一遍该模型自带的 `expect` 对照项，确认"临界值处整题都自洽"。
 
-```powershell
+```pwsh
 # 斜面：求"恰好不下滑"的摩擦因数（解析 μ = tanθ = tan30° = 0.5773503）
 & $NODE node\solve.mjs --model incline --param mu --range 0:1.2 --watch accel:block:mag --target 0 --tol 1e-6
 
@@ -219,7 +219,7 @@ cd <本目录>
 
 迭代物理（改参数、调受力律）时不要每次都跑全库，先用一条命令拿到秒级反馈：
 
-```powershell
+```pwsh
 & $NODE node\quick.mjs --model incline                                      # 默认 ≤12 行
 & $NODE node\quick.mjs --model plankPush --params '{"force":20}' --brief    # ≤5 行
 ```
@@ -329,7 +329,7 @@ cd <本目录>
 |---|---|---|
 | Node.js | **≥ 16.7.0**（**已实测 v24.21.0**） | 用到 `fs.cpSync`（Node 16.7.0 起提供）；`fs.rmSync` 需 14.14+；`.mjs` 走 ESM |
 | 可选依赖 | `@napi-rs/canvas` ^1.0.11，**仅**导出 GIF / 预览 PNG（`node/qa.mjs`）时需要 | 未安装时相关脚本自动跳过，其余功能不受影响 |
-| 打包依赖 | 调用 Windows 自带的 `powershell` + `Compress-Archive` 生成 zip | `node/package.mjs`；非 Windows 环境需改用其它压缩方式 |
+| 打包依赖 | 由 `node/ziputil.cjs` **纯 Node** 写 zip（不依赖 PowerShell / tar，跨平台） | `node/package.mjs`；非 Windows 环境需改用其它压缩方式 |
 | DSH 客户端 | 本 skill 在 DSH 会话中开发与验证；**未绑定特定 DSH 版本** | — |
 
 ### 6.3 数据格式与引擎后端

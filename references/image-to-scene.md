@@ -66,7 +66,7 @@ N = mgcosθ + Fsinθ = 20×0.7986 + 50×0.6018 = 46.06 N
 
 ## 第四步：验证 → 出图 → 目视
 
-```powershell
+```pwsh
 & $NODE node\sim.mjs --model <id>          # 看残差（应 < 0.5%）与对照表（应全 PASS）
 & $NODE node\tests.mjs                     # 全库回归
 & $NODE node\qa.mjs --model <id> --times 0.2,1.0,2.0
@@ -78,7 +78,7 @@ N = mgcosθ + Fsinθ = 20×0.7986 + 50×0.6018 = 46.06 N
 
 ## 第五步：交付
 
-```powershell
+```pwsh
 & $NODE node\build.mjs --title "题目名称"
 # → dist/阿物先生.html（单文件，双击可用，含全部模型与新模型）
 ```

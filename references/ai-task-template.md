@@ -63,3 +63,10 @@
 汇报格式：≤15 行，含 文件 / 实测数字 / 未解决项 / 复现命令
 额外禁令：禁止静默兜底；禁止放宽容差；禁止通读 >300 行文件
 ```
+
+## 附：本机 shell 与引号纪律（踩过多次，写死）
+
+- 本机 DSH 工具调用**可能落在 Windows PowerShell 5.1**（`pwsh` 不在 PATH 时）→ 原生命令传参的引号不可信。
+- 因此：**给 CLI 传 JSON/复杂参数一律用 Node `spawnSync`**（argv 由 Node 控制）；写文件一律用 `fs.writeFileSync(p, t, 'utf8')`。
+- 需要 PS 7 语义时用绝对路径：`C:\Program Files\PowerShell\7\pwsh.exe`（已加入用户 PATH，重启 DSH 后可直接用 `pwsh`）。
+- 改源码只用 write/edit 工具，**不要**用 shell 的 `Get-Content`/`Set-Content` 处理 UTF-8 文本（5.1 会写 BOM）。

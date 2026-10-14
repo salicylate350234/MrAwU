@@ -107,7 +107,7 @@ fs.writeFileSync(path.join(pkgDir, '使用说明.txt'), readmeTxt, 'utf8');
 
 // 压缩交给**独立子进程**（node/zip-one.cjs → node/ziputil.cjs）：
 // 本机上在主进程里压缩会让 Node 直接崩（exit 0xC0000409），隔离后父进程不受影响，
-// 而且调 Node 自身的 spawnSync 在本环境是正常的（调 powershell/tar 才崩）。
+// 而且调 Node 自身的 spawnSync 在本环境是正常的（调 powershell/tar 这类外部程序才崩）。
 function zipDir(srcDir, outZip, entry) {
   const args = [path.join(ROOT, 'node', 'zip-one.cjs'), srcDir, outZip];
   if (entry) args.push(entry);

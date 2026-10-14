@@ -2,7 +2,7 @@
  * 极简 zip 打包器（纯 Node，无依赖，跨平台）。
  *
  * 为什么不用系统命令：
- *   早先 dev 用 spawnSync('powershell', Compress-Archive) 压缩，在本机环境下
+ *   早先 dev 用 spawnSync 调用 Windows PowerShell 的 Compress-Archive（**Windows PowerShell 5.1**）压缩，在本机环境下
  *   会让 Node 进程直接崩溃（exit 0xC0000409），换成 tar.exe 也一样——凡是
  *   spawnSync 调**外部程序**都会崩，只有调 Node 自身正常。
  *   于是改成纯 JS 写 zip：既不崩，也不再依赖 Windows 专有命令（macOS/Linux 同样能跑）。
